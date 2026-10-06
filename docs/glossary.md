@@ -16,10 +16,12 @@ specification (`../README.md`) and [architecture.md](architecture.md).
 | Reference | The transaction a `REFUND`/`ROLLBACK` reverts, resolved by `(providerId, referenceExternalTransactionId)`. | spec §7 |
 | Reconciliation | Recomputing balance from the ledger and reporting (never silently fixing) divergence. | spec §9 |
 | Double-entry ledger | Optional differential: paired debit/credit entries per transaction. Not required. | spec §6.4 |
-| `PENDING` | Accepted, not yet applied. | spec §6.3 |
+| `PENDING` | Internal in-flight state only — never returned in HTTP responses (clarified 2026-10-06); spec §6.3: accepted, not yet applied. | spec §6.3, plan §4 |
 | `PENDING_REFERENCE` | Waiting for the referenced transaction; reprocessed by scheduled worker with backoff. | spec §7.1 |
 | `PROCESSED` / `REJECTED` / `FAILED` | Terminal states — no further transitions; attempting one is a programming error. | spec §6.3 |
 | `failureCode` | Stable, machine-readable reason for rejection/failure; taxonomy defined by the implementation. | spec §7.2 |
+| `code` | Stable HTTP error-class identifier in API response bodies (e.g. `UNAUTHORIZED`, `ROLE_FORBIDDEN`, `VALIDATION_ERROR`) — distinct from `failureCode`, which is domain-level. | plan §4 |
+| `transact:write` / `transact:read` | Keycloak roles: write required for POST endpoints, read for GET. | plan T043/T044 |
 | Idempotency conflict | Same `Idempotency-Key` with a different `payloadHash` — distinct from a replay. | spec §9 |
 
 ## Technical Terms and Acronyms
@@ -35,7 +37,7 @@ specification (`../README.md`) and [architecture.md](architecture.md).
 | DLQ | Dead-letter queue (`wager-transactions-dlq.fifo`) for messages exceeding the attempt limit. |
 | FIFO queue | SQS queue with ordering/dedup by `MessageGroupId` — an optimization only, never the consistency guarantee. |
 | IaC | Infrastructure as Code — version-controlled infrastructure definitions (none yet). |
-| IdP | Identity Provider (OIDC) used for authentication if adopted (spec §2). |
+| IdP | Identity Provider (OIDC) used for HTTP API authentication — **Keycloak** (decided 2026-10-06, plan T043; spec §2). |
 | OIDC | OpenID Connect — protocol layered on OAuth 2.0 for identity. |
 | ADR | Architecture Decision Record, stored in [decisions/](decisions/). |
 | Canonical JSON | Key-sorted JSON used to compute `payloadHash`; transport metadata excluded. |

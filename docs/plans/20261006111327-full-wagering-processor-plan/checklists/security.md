@@ -3,12 +3,12 @@
 Plan: `docs/plans/20261006111327-full-wagering-processor-plan.md`
 Domain: security
 
-- [ ] CHK001 Is authentication specified for every non-health endpoint with explicit 401 behavior (AC-16)? [Completeness]
+- [ ] CHK001 Is authentication specified for every non-public endpoint with explicit 401/403 behavior (AC-16)? [Completeness]
 - [ ] CHK002 Is authorization specified per endpoint (`transact:write` for POSTs, `transact:read` for GETs) with 403 vs 401 distinction? [Clarity]
 - [ ] CHK003 Are JWT validation requirements stated: issuer, audience, expiry, JWKS source, and fail-closed behavior on JWKS errors? [Measurability]
 - [ ] CHK004 Is it explicit that health endpoints and `/metrics` are `@Public()` and that this is intentional, not an oversight? [Consistency]
 - [ ] CHK005 Are secrets requirements specified (env-only, `.env` gitignored, no hardcoded credentials in code or compose)? [Completeness]
-- [ ] CHK006 Is log redaction required (`authorization` header, payloads) and testable (AC-18 observability log fixture)? [Measurability]
+- [ ] CHK006 Is log redaction required (`authorization` header, payloads) and testable (T048 auth-observability log fixture)? [Measurability]
 - [ ] CHK007 Are input-validation requirements complete: DTO whitelist/forbid, money format regex, `kind` allowlist, `OPENING` rejection on both ingress paths? [Edge Case]
 - [ ] CHK008 Is SQL-injection safety addressed (parameterized queries only) for repository and raw-claim queries? [Completeness]
 - [ ] CHK009 Are queue payloads specified as fully domain-validated (untrusted input) including malformed envelopes? [Edge Case]

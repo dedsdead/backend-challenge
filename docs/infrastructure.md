@@ -18,10 +18,11 @@ compose files exist yet. Record realized decisions in place as implementation la
 | Environment | Provider | Provisioning | Status |
 |---|---|---|---|
 | local | Docker Compose on developer machine | `docker-compose.yml` at repo root | prescribed by spec; not yet created |
-| dev / staging / prod | not defined | not defined | pending decision — fill in when adopted |
+| dev / staging / prod | not defined | not defined | pending decision — fill in when decided |
 
-Required local services (spec §4): PostgreSQL, AWS SQS via **LocalStack** or
-**MiniStack**. Details per environment: [environments.md](environments.md).
+Required local services: spec §4 mandates PostgreSQL and AWS SQS via **LocalStack** or
+**MiniStack**; Keycloak is added by decision (see Core Services). Details per
+environment: [environments.md](environments.md).
 
 ## Core Services and Dependencies
 
@@ -29,6 +30,7 @@ Required local services (spec §4): PostgreSQL, AWS SQS via **LocalStack** or
 |---|---|---|
 | NestJS app (Bun 1.x) | HTTP API + SQS consumer + workers | must be correct with **3+ concurrent instances** |
 | PostgreSQL | system of record | wallets, ledger, inbox, outbox, idempotency |
+| Keycloak (local IdP) | OIDC token issuer for the HTTP API | decided 2026-10-06, not yet implemented — realm export `keycloak/realm-export.json` (plan T003/T043); not probed by readiness (T047) |
 | AWS SQS FIFO | ingress + egress messaging | `wager-transactions.fifo`, `wager-transactions-dlq.fifo` (spec §10) |
 | Outbox publisher worker | publishes events post-commit | multi-publisher safe, backoff retry |
 | `PENDING_REFERENCE` worker | reprocesses out-of-order refs | scheduled, exponential backoff (spec §7.1) |
@@ -36,7 +38,8 @@ Required local services (spec §4): PostgreSQL, AWS SQS via **LocalStack** or
 
 ## Deployment and Operations
 
-- **Local**: `docker compose up` starts PostgreSQL + queue broker; app runs via Bun.
+- **Local**: `docker compose up` starts PostgreSQL + queue broker + Keycloak; app
+  runs via Bun.
 - **Migrations**: versioned and reversible; run before new code serves traffic.
 - **Shutdown**: on `SIGTERM`, finish in-flight messages or return SQS visibility;
   ack only after SQL commit.

@@ -17,5 +17,5 @@ Domain: observability
 - [ ] CHK012 Are assumptions stated (prom-client in-process scraping, no external APM) so evaluators know the observability boundary? [Dependencies and assumptions]
 - [ ] CHK013 Are the brainstorm log fields (correlationId, messageId, transactionId, walletId, providerId) carried as individually checkable requirements? [Measurability]
 - [ ] CHK014 Is the "no full financial payloads in logs" brainstorm constraint specified with a verifiable assertion? [Completeness]
-- [ ] CHK015 Is the readiness dependency set explicitly decided (PostgreSQL + SQS required; Keycloak in or out) rather than left implicit? [Edge Case]
+- [ ] CHK015 Is the readiness dependency set explicitly decided (source: plan T047 / clarifications) rather than left implicit? [Edge Case]
 - [ ] CHK016 Are the high-correctness-risk workers (outbox publisher, PENDING_REFERENCE reprocessor) given observability signals (lag, claim contention, retries)? [Coverage]

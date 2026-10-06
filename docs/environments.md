@@ -9,9 +9,9 @@ the spec; other environments are pending decisions.
 | Aspect | local | dev | staging | prod |
 |---|---|---|---|---|
 | Purpose | development + integration/concurrency tests | shared integration testing | pre-production validation | production |
-| Runtime | Docker Compose (PostgreSQL + LocalStack/MiniStack) + Bun | not defined yet | not defined yet | not defined yet |
+| Runtime | Docker Compose (PostgreSQL + LocalStack/MiniStack + Keycloak) + Bun | not defined yet | not defined yet | not defined yet |
 | Data | disposable, seeded | synthetic only | synthetic only | real |
-| Status | primary environment for this project | pending decision | pending decision | pending decision |
+| Status | primary environment for this project; Keycloak decided 2026-10-06, not yet implemented (plan T003/T043) | pending decision | pending decision | pending decision |
 
 ## Configuration and Secrets Boundaries
 

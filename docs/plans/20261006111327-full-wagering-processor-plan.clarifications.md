@@ -8,7 +8,7 @@
 
 - **Q: Reversal uniqueness semantics — spec §7.4 says "same reference cannot be reversed twice *by the same operation type*", but the plan only said "single reversal" with no mechanism. How is it enforced?**
   - Recommendation: Per-type enforcement, literal spec reading; detect existing same-kind reversal via query.
-  - Final Answer: **Per-type, enforced by DB partial unique index** — allow mixed-type reversals (e.g. REFUND then ROLLBACK on one BET); block a second reversal of the same type with `REFERENCE_ALREADY_REVERSED`; backstop the rule with a partial unique index on `(reference_transaction_id, kind)` where status is terminal-applied, aligning with spec §5.9 DB-enforcement.
+  - Final Answer: **Per-type, enforced by DB partial unique index** — allow mixed-type reversals (e.g. REFUND then ROLLBACK on one BET); block a second reversal of the same type with `REFERENCE_ALREADY_REVERSED`; backstop the rule with a partial unique index on `(reference_transaction_id, kind)` where status is terminal-applied (i.e. `status = 'PROCESSED'`), aligning with spec §5.9 DB-enforcement.
   - Impact on Plan: T018 (entity/index), T020 (migration 001 raw index SQL if decorator unsupported), T026 step 5 (detection wording), T029 (mixed-type e2e test).
 
 - **Q: HTTP 202 `status: PENDING` is in the mapping but no code path produces it (sync submit always lands PROCESSED / REJECTED / PENDING_REFERENCE). Keep or drop?**
@@ -28,7 +28,7 @@
 
 - **Q: Cross-currency conflict is unit-tested (T017) and guarded (T026) but has no end-to-end case. Add one?**
   - Recommendation: Yes — cheap integration assertion beyond the spec floor (§13 lists currency conflict under unit tests only).
-  - Final Answer: **Add integration assertion** — submit with currency ≠ wallet currency → 422 `CURRENCY_MISMATCH`, balance unchanged, no ledger entry.
+  - Final Answer: **Add integration assertion** — submit with currency ≠ wallet currency → 422 `TRANSACTION_REJECTED` + `failureCode: CURRENCY_MISMATCH`, balance unchanged, no ledger entry.
   - Impact on Plan: T029 gains the cross-currency case.
 
 ## Coverage Summary
