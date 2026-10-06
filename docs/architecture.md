@@ -1,14 +1,16 @@
 # Architecture
 
 Source of truth for system architecture, technology choices, and safe-change guidance.
-The challenge specification is `../README.md`; decisions made during implementation are
-recorded here and in [decisions/](decisions/). Status: **spec-only** — no application
-code exists yet, so open choices below are undecided by design.
+The challenge specification is `../README.md`; decisions are recorded here (and in
+[decisions/](decisions/) as ADRs when created). Status: **spec-only — no application
+code yet**; technology choices are decided but not yet implemented (execution plan +
+clarifications, 2026-10-06).
 
 **Graded deliverable note:** the challenge grades a root-level `ARCHITECTURE.md`
 (spec §14 documentation points; §2 and §4 also reference it by name). This file is the
-working source of truth — when implementation starts, the root `ARCHITECTURE.md` must
-be created as the graded artifact and kept in sync with (or generated from) this file.
+working source of truth — the root `ARCHITECTURE.md` is created before delivery
+(plan T053, Phase 9) as the graded artifact (a decisions/trade-offs summary linking
+here as the full source of truth) and kept in sync with this file (plan T054).
 
 ## System Overview
 
@@ -34,14 +36,17 @@ Prescribed by the spec (not open choices): Bun 1.x, TypeScript strict, NestJS,
 PostgreSQL, AWS SQS (LocalStack/MiniStack locally), Docker Compose, versioned
 reversible migrations.
 
-Open choices (record decision + rationale here and in `decisions/` when made):
+Decisions (source: execution plan + clarifications):
 
 | Choice | Options in spec | Decision |
 |---|---|---|
-| ORM | MikroORM (preferred) or TypeORM | — |
-| Concurrency strategy | pessimistic lock / optimistic lock + retry / conditional update | — |
-| Authentication | external IdP (e.g. Keycloak, Zitadel) or documented no-op extension point | — |
-| Root `ARCHITECTURE.md` | graded artifact required by spec §14 vs. this file as canonical — sync strategy (root stub linking here, or full copy) | — |
+| ORM | MikroORM (preferred) or TypeORM | ✅ **MikroORM** (explicit UoW, `transactional()`, `LockMode`) |
+| Concurrency strategy | pessimistic lock / optimistic lock + retry / conditional update | ✅ **Pessimistic row lock** (`FOR UPDATE` on wallet row inside the tx, scope = `walletId`); `version` incremented on balance change for observability |
+| Authentication | external IdP (e.g. Keycloak, Zitadel) or documented no-op extension point | ✅ **Keycloak** (OIDC JWT via JWKS; health + `/metrics` open) |
+| Root `ARCHITECTURE.md` | graded artifact required by spec §14 vs. this file as canonical — sync strategy | ✅ **Root summary** (see Graded deliverable note above); sync at plan T053/T054 |
+
+Legend: ✅ = decided 2026-10-06, **not yet implemented** — flip these annotations to
+"implemented" at plan T054.
 
 ## Module and Service Boundaries
 

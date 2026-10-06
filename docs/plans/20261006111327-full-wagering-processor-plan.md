@@ -73,19 +73,27 @@ Decisions come from the brainstorm (✅ items) plus the ⚠️ OPEN items resolv
   3. **`PENDING_REFERENCE` limits:** max 10 attempts, backoff
      `min(2^attempts * 30s, 30min)`, TTL 24h → terminal `REJECTED` +
      `REFERENCE_NOT_FOUND` + `WagerTransactionRejected` event.
-  4. **HTTP status mapping:** success (`PROCESSED`) → **200** `OK` with the §9 body;
-     invalid payload → **400** `VALIDATION_ERROR`; idempotency conflict /
-     duplicate wallet → **409** (`IDEMPOTENCY_CONFLICT` / `WALLET_EXISTS`);
-  business rejection → **422** `TRANSACTION_REJECTED` + `failureCode` +
-  `transactionId`; accepted-pending → **202** with
-  `status: PENDING_REFERENCE` (`PENDING` is an internal in-flight enum value and
-  **never returned** by HTTP — clarified 2026-10-06); authenticated but missing
-  required role → **403** `ROLE_FORBIDDEN` (401 reserved strictly for
-  missing/invalid token); transient infra → **503**
-     `SERVICE_UNAVAILABLE` + `Retry-After`; not found → **404**. Every replay
-     (success **or** error) repeats the original response with
-     `idempotentReplay: true` and the balance observed at original processing
-     (§7.7, stored as `result_balance_*` on the transaction row).
+  4. **HTTP status mapping** — one `code` per failure class:
+     - **200** `OK`: success (`PROCESSED`) with the §9 body
+     - **201**: wallet created (`POST /wallets`)
+     - **400** `VALIDATION_ERROR`: invalid payload (including missing
+       `Idempotency-Key` and `kind: "OPENING"`)
+     - **401** `UNAUTHORIZED`: missing/invalid token (fail-closed on JWKS errors)
+     - **403** `ROLE_FORBIDDEN`: authenticated but missing the required role
+     - **404** `NOT_FOUND`: unknown transaction/wallet on **read** endpoints (a
+       wallet miss on submit is a business rejection → **422** +
+       `failureCode: WALLET_NOT_FOUND`)
+     - **409** `IDEMPOTENCY_CONFLICT` / `WALLET_EXISTS`: idempotency conflict /
+       duplicate wallet
+     - **422** `TRANSACTION_REJECTED` + `failureCode` + `transactionId`: business
+       rejection
+     - **202** `status: PENDING_REFERENCE`: accepted-pending (`PENDING` is an
+       internal in-flight enum value and **never returned** by HTTP — clarified
+       2026-10-06)
+     - **503** `SERVICE_UNAVAILABLE` + `Retry-After`: transient infrastructure failure
+     - Replays (success **or** error) repeat the original response with
+       `idempotentReplay: true` and the balance observed at original processing
+       (§7.7, stored as `result_balance_*` on the transaction row).
   5. **`payloadHash`:** SHA-256 hex of canonical JSON (recursively ASCII-sorted keys,
      no whitespace) over business fields only:
      `providerId, externalTransactionId, playerId, walletId, roundId, gameId, kind,
@@ -121,8 +129,8 @@ Decisions come from the brainstorm (✅ items) plus the ⚠️ OPEN items resolv
   `FOR UPDATE SKIP LOCKED`.
 - **Security:** OIDC JWT via JWKS (issuer/audience from env) — never hand-rolled
   users; secrets only via env (`.env` gitignored); parameterized queries only; logs
-  redact payloads; health endpoints `@Public()`; queue payloads fully domain-validated
-  (including `kind !== "OPENING"`).
+  redact payloads; health endpoints and `GET /metrics` `@Public()`; queue payloads
+  fully domain-validated (including `kind !== "OPENING"`).
 - **Tests required by project rules** (spec §13): unit, integration against real
   PostgreSQL + LocalStack containers (mocks alone are eliminatory), real-parallel
   concurrency tests. Runner: `bun test`.
@@ -223,9 +231,11 @@ dies and another instance runs the publisher **Then** the event is published
 **Roles:** Operator · **Priority:** Must-have
 
 #### AC-16: Auth boundary
-**Given** no/invalid token **When** calling any non-health endpoint **Then** 401;
-with a valid Keycloak token (correct issuer/audience/scope) **Then** the endpoint
-works; `GET /health/live` and `/health/ready` are always unauthenticated.
+**Given** no/invalid token **When** calling any non-public business endpoint
+**Then** 401 `UNAUTHORIZED`; **Given** a valid token missing the required role
+**When** calling that endpoint **Then** 403 `ROLE_FORBIDDEN`; `/health/*` and
+`GET /metrics` are the only `@Public` endpoints and always work without a token
+(T007/T046).
 **Roles:** Unauthenticated / Provider · **Priority:** Must-have
 
 #### AC-17: Reconciliation
@@ -237,7 +247,7 @@ and flagged `consistent: false` — never auto-corrected.
 
 #### AC-18: OPENING cannot be submitted externally
 **Given** the API **When** a payload with `kind: "OPENING"` arrives **Then**
-400/`VALIDATION_FAILED`; **Given** the queue **When** such a message arrives **Then**
+400 `VALIDATION_ERROR`; **Given** the queue **When** such a message arrives **Then**
 it is classified permanent and ends in the DLQ — only internal wallet creation may
 create `OPENING`.
 **Roles:** Provider · **Priority:** Must-have
@@ -360,7 +370,7 @@ envelope — no ORM/Nest imports.
     `balanceBefore ± money === balanceAfter` (throws `ValidationError` otherwise),
     `rehydrate(state)`; `isBalanced()`; no setters, no transition methods
 - [ ] T014 [US2] Create `src/domain/wager-transaction/wager-transaction.ts`
-  - private ctor; static `create(props)` (nasc `PENDING`; requires
+  - private ctor; static `create(props)` (created as `PENDING`; requires
     `referenceExternalTransactionId` for `REFUND`/`ROLLBACK`; rejects `OPENING` when
     `source !== "internal"`), `rehydrate(state)`
   - transitions `markProcessed(referenceTransactionId, at)`,
@@ -449,7 +459,9 @@ repository/mapper layer connecting domain to MikroORM.
   - add to the migration: ledger immutability trigger
     `CREATE TRIGGER trg_wallet_ledger_entry_immutable BEFORE UPDATE OR DELETE ON
     wallet_ledger_entry FOR EACH ROW EXECUTE FUNCTION raise_immutable()`
-    (function raises exception) — plus `down()` dropping trigger + tables + enums
+    (function raises exception); verify the `uq_wager_tx_reference_kind` partial
+    index from T018 is present in the generated SQL (raw SQL per T018 if not);
+    `down()` must drop trigger + index + tables + enums
   - **run immediately**: `bun run mikro-orm migration:up` against local compose PG;
     then `bun run mikro-orm migration:check` (drift) must pass
 - [ ] T021 [US3] Create `src/database/mappers.ts`
@@ -470,7 +482,9 @@ repository/mapper layer connecting domain to MikroORM.
     with `FOR UPDATE SKIP LOCKED` — used in Phase 7), `markPublished`, `scheduleRetry`
 - [ ] T023 [US3] Create integration tests `tests/integration/schema.spec.ts`
   - against real compose PostgreSQL: unique constraints reject duplicates (wallet
-    player+currency, idempotency key, provider+external, inbox pair), CHECK rejects
+    player+currency, idempotency key, provider+external, inbox pair), partial unique
+    index `uq_wager_tx_reference_kind` rejects a second `PROCESSED` same-kind
+    reversal and accepts mixed kinds, CHECK rejects
     negative balance, ledger trigger blocks UPDATE and DELETE, migration `up`/`down`
     round-trip on a scratch schema
 
@@ -524,18 +538,17 @@ decided status mapping.
     3. `walletRepo.findByIdForUpdate(em, walletId)` — **inside** the transaction
        (missing → `WALLET_NOT_FOUND`)
     4. currency equality check (`CURRENCY_MISMATCH`)
-    5. reference resolution for `REFUND`/`ROLLBACK`:
-       `findByProviderExternal(providerId, referenceExternalTransactionId)` →
-       validate same provider/player/wallet/currency/round (`REFERENCE_MISMATCH`),
+     5. reference resolution for `REFUND`/`ROLLBACK`:
+        `findByProviderExternal(providerId, referenceExternalTransactionId)` →
+        validate same provider/player/wallet/currency/round (`REFERENCE_MISMATCH`),
         kind rules (`REFERENCE_INVALID_KIND`: REFUND→BET only; ROLLBACK→BET|WIN|REFUND),
         **per-type** single reversal (§7.4, clarified 2026-10-06): existing applied
         same-`kind` reversal → `REFERENCE_ALREADY_REVERSED`; mixed-type reversal on
         one reference (e.g. REFUND then ROLLBACK) is **allowed**; a unique violation
-        on the partial index at apply time maps to the same code —
-        value equality (else
-       `VALIDATION_FAILED`) — if absent → `markPendingReference()` + snapshot
-       `result_balance` + `WagerTransactionPendingReference` event, **no balance
-       change**, commit
+        on the partial index at apply time maps to `REFERENCE_ALREADY_REVERSED`;
+        if the referenced transaction is absent → `markPendingReference()` + snapshot
+        `result_balance` + `WagerTransactionPendingReference` event, **no balance
+        change**, commit
     6. apply `wallet.debit/credit` when `affectsBalance()` (LOSS: skip) →
        ledger entry; insufficient → `REJECTED INSUFFICIENT_FUNDS`; reversal making
        balance negative → `REJECTED REVERSAL_EXCEEDS_BALANCE`
@@ -549,9 +562,11 @@ decided status mapping.
     (missing → 400 `VALIDATION_ERROR`); `dto/submit-transaction.dto.ts` rejects
     `kind: "OPENING"` (AC-18 HTTP side) via custom validator
   - response codes: 200 `PROCESSED`, 202 `PENDING_REFERENCE`, 422
-    `REJECTED` (body carries `transactionId` + `failureCode`), per mapping
-    (`PENDING` never returned; 401/403 surface from the Phase 8 guards)
-  - `GET /wagering/transactions/:transactionId` (404 when unknown)
+    `TRANSACTION_REJECTED` (body carries `status: REJECTED`, `transactionId` +
+    `failureCode`), per mapping
+    (`PENDING` never returned; 401 `UNAUTHORIZED` / 403 `ROLE_FORBIDDEN` surface
+    from the Phase 8 guards)
+  - `GET /wagering/transactions/:transactionId` (404 `NOT_FOUND` when unknown)
   - `GET /providers/:providerId/wagering/transactions/:externalTransactionId`
 - [ ] T028 [US4] Create `src/common/http/exception.filter.ts`
   - global filter maps: `ValidationError`→400 `VALIDATION_ERROR`;
@@ -559,8 +574,11 @@ decided status mapping.
     `WalletExistsError`→409 `WALLET_EXISTS`;
     authenticated without required role → 403 `ROLE_FORBIDDEN`;
     `ReferenceResolutionError`/business reject→422 `TRANSACTION_REJECTED` +
-    `failureCode`; not-found→404; transient infra (`ECONNREFUSED`, SQS/PG
-    down)→503 `SERVICE_UNAVAILABLE` with `Retry-After: 5`
+    `failureCode`; read-path not-found→404 `NOT_FOUND` (a wallet miss during
+    submit is a business reject → 422 + `failureCode: WALLET_NOT_FOUND`); transient
+    infra (`ECONNREFUSED`, SQS/PG
+    down)→503 `SERVICE_UNAVAILABLE` with `Retry-After: 5`;
+    missing/invalid token or JWKS fail-closed→401 `UNAUTHORIZED`
   - body shape `{ statusCode, code, message, failureCode?, transactionId?,
     idempotentReplay?, correlationId? }` — replays of stored rejections repeat the
     original 422 with `idempotentReplay: true`
@@ -569,7 +587,8 @@ decided status mapping.
     BET success, insufficient funds, replay (original balance) + conflict, WIN/LOSS,
     refund once/twice, reconciliation consistent, OPENING rejected, ledger
     pagination cursor stability
-  - cross-currency submit (currency ≠ wallet currency) → 422 `CURRENCY_MISMATCH`,
+  - cross-currency submit (currency ≠ wallet currency) → 422
+    `TRANSACTION_REJECTED` + `failureCode: CURRENCY_MISMATCH`,
     balance unchanged, no ledger entry
   - mixed-type reversal allowed (REFUND then ROLLBACK on one BET both apply) while
     a second same-type reversal is `REJECTED REFERENCE_ALREADY_REVERSED`
@@ -715,8 +734,8 @@ out-of-order references resolved with bounded retries.
 ### Phase 8: Auth & Observability
 
 **Status**: ⬜ Pending
-**Objective**: Keycloak OIDC on the API (health open), structured redacted logs,
-prometheus metrics, full readiness.
+**Objective**: Keycloak OIDC on the API (health open), structured
+redacted logs, prometheus metrics, full readiness.
 **Dependencies**: Phase 4
 
 **Tasks**:
@@ -724,16 +743,19 @@ prometheus metrics, full readiness.
 - [ ] T043 [US8] Create `keycloak/realm-export.json`
   - realm `wagering`; client `wagering-api` (bearer-only, issuer
     `http://localhost:8080/realms/wagering`); roles `transact:write`,
-    `transact:read`; test users `provider-client` (both roles) and `operator`
-    (`transact:read`); direct-grant enabled for local testing
+    `transact:read`; test users `provider-client` (both roles), `operator`
+    (`transact:read` + `transact:write` — needed for POST reconciliation, AC-17),
+    `read-only-client` (`transact:read` only) and `write-only-client`
+    (`transact:write` only) — the two single-role users exist so T048 can prove
+    both 403 directions;
+    direct-grant enabled for local testing
 - [ ] T044 [US8] Create `src/auth/jwt.guard.ts` + `src/auth/public.decorator.ts` + `src/auth/roles.guard.ts`
   - global `APP_GUARD`: `@Public()` skips; otherwise require `Authorization: Bearer`
     validated against `KEYCLOAK_ISSUER` JWKS (`iss` + `aud` + `exp`), fail-closed on
-    JWKS errors → 401 (never 500 → business path)
+    JWKS errors → 401 `UNAUTHORIZED` (never 500 → business path)
   - `@Roles('transact:write')` on all POSTs, `@Roles('transact:read')` on GETs;
-    missing required role → **403 `ROLE_FORBIDDEN`** (401 reserved for
-    missing/invalid token — clarified 2026-10-06);
-    health controllers stay `@Public()` (AC-16)
+    missing required role → **403 `ROLE_FORBIDDEN`**; health controllers and
+    `GET /metrics` stay `@Public()` (AC-16, T046)
 - [ ] T045 [US8] Create `src/observability/logger.ts` (pino) and wire in `src/main.ts`
   - base bindings `service: 'wagering-processor'`; middleware assigns/propagates
     `correlationId` (honors inbound `x-correlation-id`, else uuid) into
@@ -755,9 +777,11 @@ prometheus metrics, full readiness.
     failure → 503 (completes T007). Keycloak is deliberately **not** probed —
     spec §9 defines ready = "PostgreSQL and SQS reachable" (clarified 2026-10-06)
 - [ ] T048 [US8] Create integration tests `tests/integration/auth-observability.spec.ts` (AC-16)
-  - health endpoints 200 without token; `POST /wallets` without token → 401; with
-    valid token → 201; wrong-audience token → 401; `/metrics` exposes counter after
-    a submit; log fixture asserts `authorization` header absent from output
+  - health endpoints and `GET /metrics` 200 without token; `POST /wallets` without
+    token or with wrong-audience token → 401 `UNAUTHORIZED`; with valid token → 201;
+    `read-only-client` on POST → 403 `ROLE_FORBIDDEN`; `write-only-client` on GET →
+    403 `ROLE_FORBIDDEN`; `/metrics` exposes a counter after a submit; log fixture
+    asserts `authorization` header absent from output
 
 **After completing this phase**:
 1. TypeScript Validation — `bun run validate`.
@@ -804,12 +828,19 @@ prometheus metrics, full readiness.
     workers, outbox/inbox, Keycloak, LocalStack, status mapping, failureCode
     taxonomy, retry limits; links to `docs/architecture.md` (full source of truth)
     and `docs/decisions/` — sync relationship stated explicitly
-- [ ] T054 [US9] Sync foundation docs with reality
-  - `docs/architecture.md`: fill open-choices table (ORM, concurrency, auth) with ✅
-    decisions + `ARCHITECTURE.md` row resolved; `docs/infrastructure.md`: mark
-    compose/queues created with file references; `docs/environments.md`: local row
-    now "implemented"; `docs/integrations.md`: Keycloak adopted, status codes
-    concrete
+- [ ] T054 [US9] Sync foundation docs with reality (one pass per file)
+  - `docs/architecture.md`: verify decisions table matches implementation; flip its
+    decision-state annotations (intro Status and ✅ Legend) from
+    decided/pending to implemented
+  - `docs/integrations.md`: flip its header Status sentence and catalog row 4 from
+    decided/spec-only to implemented; confirm the status-code contract matches
+    shipped behavior
+  - `docs/infrastructure.md`: flip its header Status sentence; mark
+    compose/queues/Keycloak created with file references
+  - `docs/environments.md`: update the local Runtime/Status cells to reflect the
+    implemented stack
+  - root `ARCHITECTURE.md`: verify its decisions summary still matches
+    `docs/architecture.md` (owns T053 output)
 - [ ] T055 [US9] (Optional) Load-test scaffold `tests/load/` + script `test:load`
   - `bun run test:load` drives parallel submits against local stack; report
     p50/p95/p99, error rate, lock conflicts, outbox lag — methodology documented
@@ -861,7 +892,7 @@ prometheus metrics, full readiness.
 - [ ] T024 [US4] Money DTO + `payload-hash.ts` canonical JSON
 - [ ] T025 [US4] Wallets module + reconciliation `src/modules/wallets/*`
 - [ ] T026 [US4] `submit-transaction.use-case.ts` atomic core (replay snapshots)
-- [ ] T027 [US4] Wagering controller + DTOs (OPENING blocked, 200/202/422)
+- [ ] T027 [US4] Wagering controller + DTOs (OPENING blocked, §4 status mapping)
 - [ ] T028 [US4] Exception filter + status mapping `src/common/http/*`
 - [ ] T029 [US4] HTTP integration tests (AC-1..8, 17, 18 + cross-currency + mixed-type reversal)
 - [ ] TypeScript validation passes (build only when explicit)
@@ -922,10 +953,11 @@ Key resolved decisions (applied to this plan):
 - **`PENDING` dropped from HTTP mapping** — 202 returns only
   `status: PENDING_REFERENCE`; `PENDING` remains internal in-flight enum only →
   Proposed Solution §4, T027.
-- **403 `ROLE_FORBIDDEN`** for authenticated-but-unauthorized; 401 strictly
-  authentication failure → §4, T028, T044.
+- **403 `ROLE_FORBIDDEN`** for authenticated-but-unauthorized; 401 `UNAUTHORIZED`
+  strictly authentication failure → §4, T028, T044.
 - **`/health/ready` = PostgreSQL + SQS only**; Keycloak explicitly excluded →
   T047.
-- **Cross-currency e2e added**: 422 `CURRENCY_MISMATCH` integration case → T029.
+- **Cross-currency e2e added**: 422 `TRANSACTION_REJECTED` +
+  `failureCode: CURRENCY_MISMATCH` integration case → T029.
 
 Deferred open points: none — no `[NEEDS CLARIFICATION]` markers remain.
