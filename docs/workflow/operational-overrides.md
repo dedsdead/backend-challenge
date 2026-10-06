@@ -20,7 +20,7 @@ policy per entry:
 ```yaml
 # docs/workflow/operational-overrides.md
 docs:
-  scope: project            # project docs live in ./docs (rule: AGENTS.md #docs-scope-boundary — file not yet present, scope user-confirmed as ./docs)
+  scope: project            # project docs live in ./docs (rule: .opencode/AGENTS.md #docs-scope-boundary)
   destructive_edits: never   # never delete or overwrite non-empty files unless asked
 verification:
   require_fresh_evidence: true  # re-run build/lint/tests before claiming completion
@@ -43,9 +43,9 @@ commits:
 
 - Adding a key here changes behavior for every subsequent workflow run in this repo.
 - Removing a key reverts that policy to the plugin default.
-- Overrides must stay consistent with `AGENTS.md`; if the two disagree, raise the
-  conflict instead of silently choosing one.
-- **Known gap (as of 2026-10-06):** `AGENTS.md` does not exist in this repository, so
-  the `#docs-scope-boundary` rule cannot be read. Effective scope is the
-  user-confirmed value `project` → `./docs`. When `AGENTS.md` is added, its rule
-  supersedes the confirmation and this note must be removed.
+- Overrides must stay consistent with `AGENTS.md` (located at `.opencode/AGENTS.md`);
+  if the two disagree, raise the conflict instead of silently choosing one.
+- The canonical boundary rule is `.opencode/AGENTS.md` section `#docs-scope-boundary`:
+  workflow commands operate on the **target project** docs tree. For this repository
+  the target project is this repo itself (user-confirmed), so project docs live in
+  `./docs`.
