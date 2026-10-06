@@ -1,0 +1,21 @@
+---
+description: Prevent unsolicited markdown file creation
+alwaysApply: true
+---
+
+# No Unsolicited Markdown Files
+
+**NEVER** create `.md` files spontaneously. Only create them when:
+
+1. The user explicitly asks ("create a README", "document this in markdown")
+2. A **workflow command** instructs it — these commands create `.md` files as part of their defined output:
+   - `/pwf-brainstorm` → `docs/brainstorms/*.md`
+   - `/pwf-plan` → `docs/plans/*.md`
+   - `/pwf-doc-capture` → `docs/solutions/*.md`
+   - `/pwf-doc` → `docs/infrastructure/*.md`, `docs/modules/*.md`, `docs/features/*.md`, `docs/decisions/*.md`
+   - `/pwf-doc-foundation` → `docs/infrastructure.md`, `docs/architecture.md`, `docs/integrations.md`, `docs/environments.md`, `docs/glossary.md`
+   - `/pwf-doc-runbook` → `docs/runbooks/*.md`, `docs/runbooks/README.md`
+   - `/pwf-work` and `/pwf-work-plan` → update existing docs (module, feature, Lambda, pattern docs)
+3. Updating an **existing** `.md` file as part of a code task (e.g. updating docs that reference changed code)
+
+**NEVER** create unsolicited summary files, changelog files, or documentation files outside of the above cases. Provide summaries directly in chat.

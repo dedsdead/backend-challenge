@@ -1,0 +1,49 @@
+---
+description: Central operational guardrails with project-level override support
+alwaysApply: true
+---
+
+# Operational Guardrails
+
+Use this file as the default source of truth for repeated operational rules.
+
+## Policy hierarchy (who decides what)
+
+1. User explicit instruction in the current chat
+2. Project override file (if present): `docs/workflow/operational-overrides.md`
+3. This file (`rules/operational-guardrails.mdc`) as default policy
+
+If a project override exists, follow it for project-specific behavior.
+If no override exists, use the defaults below.
+
+## Default AWS operations policy (recommended, not forced)
+
+- Run `aws sso login --profile <aws-profile>` before AWS CLI commands when applicable.
+- Do not deploy through IAC/CDK unless project-specific rules explicitly allow it.
+
+## Default Lambda deployment policy
+
+- Lambda deployment uses project deployment scripts only.
+- Use command `/pwf-aws-lambda-deploy` for guided Lambda deploy flow.
+
+## Completion claims (always required)
+
+- No "done/fixed/passing" claims without fresh verification evidence.
+- Include command, exit status, and key output in the completion message.
+
+## Verification evidence format
+
+- `Command:` executed command
+- `Result:` exit code/status
+- `Evidence:` key output lines
+- `Limitation:` partial coverage or constraints (if any)
+
+## TypeORM migration discipline (default)
+
+TypeORM migrations follow this atomic chain:
+
+1. Generate migration (`typeorm:generate`)
+2. Drift-check new migration (`schema-drift-detector`)
+3. Run migration locally immediately (`typeorm:run`)
+
+If step 3 fails, stop and fix before continuing other tasks.

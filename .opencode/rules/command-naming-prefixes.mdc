@@ -1,0 +1,32 @@
+---
+description: Enforce technology prefixes for tech-specific commands
+alwaysApply: true
+---
+
+# Command Naming Prefixes
+
+Use explicit technology prefixes for commands that are bound to a specific platform, provider, or framework.
+
+## Rule
+
+- If a command is technology-specific, its name MUST start with that technology prefix.
+- If a command is provider-specific, include the provider prefix first.
+- Keep framework-agnostic commands generic (do not add unnecessary prefixes).
+
+## Naming format
+
+- Preferred format: `<provider>-<technology>-<action>`
+- Example for AWS Lambda deploy: `aws-lambda-deploy`
+
+## Examples
+
+- `aws-lambda-deploy` (AWS-specific Lambda deploy workflow)
+- `stripe-webhook-sync` (Stripe-specific operation)
+- `angular-component-audit` (Angular-specific operation)
+
+## Anti-examples
+
+- `deploy-lambda` (missing provider/technology prefix)
+- `deploy` (too generic for a tech-specific operation)
+
+When creating or renaming commands, always apply this convention and update workflow docs accordingly.

@@ -1,0 +1,16 @@
+---
+description: Use agent paths relative to .opencode/agents/ directory
+alwaysApply: true
+---
+
+# Agent Namespace Convention
+
+When referencing plugin agents in prompts, use paths relative to `.opencode/agents/`:
+
+- `agents/research/<agent-name>`
+- `agents/review/<agent-name>`
+- `agents/docs/<agent-name>`
+- `agents/workflow/<agent-name>`
+- `agents/design/<agent-name>`
+
+Avoid short names alone when the context is ambiguous.

@@ -1,0 +1,41 @@
+---
+description: Build execution policy - TypeScript validation is default, explicit build only
+globs: ["**/*.{ts,tsx,js,jsx}"]
+alwaysApply: true
+---
+
+# Build Policy
+
+## TypeScript Validation (Default)
+
+During implementation and development:
+- **ALWAYS** run `tsc --noEmit` or `npm run validate` for fast type checking
+- **NEVER** run `npm run build` or `next build` automatically
+- Fix ALL TypeScript and lint errors before claiming completion
+
+## Full Build (Explicit Only)
+
+Run full build ONLY when:
+1. User explicitly requests: "run the build", "build the project", etc.
+2. Preparing for deployment
+3. Investigating complex build-specific issues that TypeScript check cannot catch
+
+## Anti-patterns (FORBIDDEN)
+
+- Running `npm run build` after every small change
+- Running `npm run build` as a default verification step
+- Using build as a type-checking substitute
+
+## Correct Workflow
+
+1. After implementing changes → Run `npm run validate` or `tsc --noEmit`
+2. Fix all type/lint errors
+3. Report evidence: "TypeScript check: 0 errors"
+4. Only run build if user explicitly asks or for deployment
+
+## Rationale
+
+- **Speed**: TypeScript check is ~80% faster than full build
+- **Feedback loop**: Quick iteration without bundling overhead
+- **Same error detection**: Catches same TypeScript and lint issues
+- **Resource efficiency**: No unnecessary asset compilation

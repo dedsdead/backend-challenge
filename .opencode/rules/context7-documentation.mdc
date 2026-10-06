@@ -1,0 +1,30 @@
+---
+description: Always use Context7 MCP for library documentation before implementing or debugging
+alwaysApply: true
+---
+
+# Context7 — Library Documentation First
+
+**Always** use the Context7 MCP to fetch up-to-date documentation before implementing features or debugging issues that involve libraries or frameworks.
+
+## How to Use
+
+1. **Resolve library ID:** Call `resolve-library-id` (Context7 MCP server) with `libraryName` and `query`.
+2. **Fetch docs:** Call `query-docs` with the resolved `libraryId` and a specific `query`.
+
+## Known Library IDs (Example stack)
+
+- `/prisma/prisma` — Prisma ORM
+- `/vercel/next.js` — Next.js framework
+- `/supabase/supabase` — Supabase client/SDK
+- `/anthropic/anthropic-typescript-sdk` — Anthropic/Claude SDK
+- `/nestjs/docs.nestjs.com` — NestJS official docs (reference pattern)
+
+For other libraries, resolve the ID first with `resolve-library-id`.
+
+## When to Use
+
+- Before implementing with Prisma, Next.js, Supabase, or any external library
+- When checking schema patterns, API routes, or React Server Components
+- When debugging framework-specific behavior
+- When verifying migration guides or version-specific patterns

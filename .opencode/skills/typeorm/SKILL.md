@@ -1,0 +1,116 @@
+---
+name: typeorm
+description: "TypeORM migration discipline — atomic chain for generating, drift-checking, and running migrations. Use when the project uses TypeORM and schema changes require a migration."
+---
+
+# TypeORM Migrations - CLI Only
+
+## CRITICAL: Always Use TypeORM CLI for Migrations
+
+You **MUST NEVER** create migration files manually. Always use the TypeORM CLI to generate migrations automatically based on entity definitions.
+
+## CRITICAL: Generate → Drift-Check → Run IMMEDIATELY (Atomic Chain)
+
+**THIS IS THE #1 SOURCE OF PRODUCTION BUGS.** When a migration is generated but NOT run on the local database immediately, the next `typeorm:generate` compares against the OLD schema and produces a migration with **schema drift** — it re-includes changes from the unrun migration plus new changes, creating a broken migration that will fail in production.
+
+**THE RULE: Every migration MUST be run on the local DB immediately after generation. Never defer. Never skip. Never "do it later."**
+
+The atomic chain (NEVER break this sequence):
+
+1. Generate:     `npm run typeorm:generate -- src/database/migrations/MigrationName`
+2. Drift-check:  Run `schema-drift-detector` agent on the new file → fix any unrelated changes
+3. Run locally:  `npm run typeorm:run` (or `npm run dev:migrate` for Docker)
+4. Verify:       If `typeorm:run` fails → STOP. Fix the issue before continuing.
+
+**BLOCKING:** Do NOT proceed to the next task, the next entity change, or the next migration until step 3 succeeds. If you need to generate a second migration in the same session, the first one MUST be run first.
+
+**Production deployment:** Use project-specific migration scripts (e.g. `npm run migrate:localtoprod`) that:
+1. Run `typeorm:run` on local DB first (fails fast if local is broken)
+2. Run guard scripts to block schema dumps and wrong-baseline migrations
+3. Only then run migrations on the production DB
+
+**NEVER edit past migrations.** If a migration is wrong, create a new corrective migration.
+
+## Why This Rule Exists
+
+1. **Automatic Schema Detection**: TypeORM CLI compares the current database schema with entity definitions and generates the exact SQL needed
+2. **Consistency**: Ensures migrations match entity definitions exactly
+3. **Error Prevention**: Avoids manual errors in SQL generation
+4. **Drift Prevention**: Running immediately keeps the local DB in sync so future generations are clean
+
+## Available Commands
+
+From backend `package.json`:
+
+```bash
+# Generate migration (compare entities with database)
+npm run typeorm:generate -- src/database/migrations/MigrationName
+
+# Create empty migration (only if absolutely necessary for custom SQL)
+npm run typeorm:create -- src/database/migrations/MigrationName
+
+# Run migrations
+npm run typeorm:run
+
+# Revert last migration
+npm run typeorm:revert
+
+# Show migration status
+npm run typeorm:show
+```
+
+## Workflow: Creating a New Migration
+
+### Step 1: Create or Update Entities
+
+1. Create new entity files in `backend/src/database/entities/` (or project-specific path)
+2. Update existing entities with new fields, relationships, or indexes
+3. Ensure all `@Entity()`, `@Column()`, `@Index()`, `@ManyToOne()`, `@OneToMany()`, etc. decorators are correct
+
+### Step 2: Update Related Entities
+
+If adding relationships:
+- Add `@OneToMany()` in the parent entity
+- Add `@ManyToOne()` in the child entity
+- Ensure `@JoinColumn()` is properly configured
+
+### Step 3: Generate Migration
+
+```bash
+cd backend
+npm run typeorm:generate -- src/database/migrations/DescriptiveMigrationName
+```
+
+### Step 4: Review Generated Migration
+
+1. **Check the generated migration file** in `backend/src/database/migrations/`
+2. **Verify**: All tables, indexes, foreign keys, column types match entity definitions
+3. **Add custom constraints** (if needed): CHECK constraints, triggers, data migrations — only what TypeORM doesn't generate
+
+### Step 5: Schema-drift check and run local migrations
+
+After generating a migration:
+
+1. **Run the schema-drift-detector** on the new migration file(s). Fix any unrelated table or column changes.
+2. **Run migrations on the local database** so the schema stays aligned for the next phase.
+
+### Step 6: Test Migration
+
+```bash
+npm run typeorm:run
+npm run typeorm:revert  # Test rollback
+npm run typeorm:run     # Apply again
+```
+
+## What NEVER to Do
+
+- **NEVER create migration files manually** by copying templates or writing SQL from scratch
+- **NEVER edit generated migrations** to change schema (instead, update entities and regenerate)
+- **NEVER skip entity definitions** and write migrations directly
+- **NEVER delete migration files** that have already been run in production
+
+## Remember
+
+**Entity definitions → TypeORM CLI → Migration file**
+
+Never skip the middle step. Always let TypeORM generate migrations from your entity definitions.
