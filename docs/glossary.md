@@ -36,7 +36,7 @@ specification (`../README.md`) and [architecture.md](architecture.md).
 | Pessimistic locking | Row-level lock held for the duration of the balance change. |
 | DLQ | Dead-letter queue (`wager-transactions-dlq.fifo`) for messages exceeding the attempt limit. |
 | FIFO queue | SQS queue with ordering/dedup by `MessageGroupId` — an optimization only, never the consistency guarantee. |
-| IaC | Infrastructure as Code — version-controlled infrastructure definitions (none yet). |
+| IaC | Infrastructure as Code — version-controlled infrastructure definitions; local only today (`docker-compose.yml`), no cloud IaC yet. |
 | IdP | Identity Provider (OIDC) used for HTTP API authentication — **Keycloak** (decided 2026-10-06, plan T043; spec §2). |
 | OIDC | OpenID Connect — protocol layered on OAuth 2.0 for identity. |
 | ADR | Architecture Decision Record, stored in [decisions/](decisions/). |
