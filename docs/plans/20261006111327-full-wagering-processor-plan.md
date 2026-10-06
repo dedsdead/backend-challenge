@@ -256,7 +256,7 @@ create `OPENING`.
 
 | Phase | Name | Depends On | Status |
 |-------|------|------------|--------|
-| 1 | Foundation & Local Stack | None | ⬜ Pending |
+| 1 | Foundation & Local Stack | None | ✅ Completed |
 | 2 | Domain Core & Events | Phase 1 | ⬜ Pending |
 | 3 | Persistence & Schema | Phase 2 | ⬜ Pending |
 | 4 | Use Case & HTTP API | Phase 3 | ⬜ Pending |
@@ -270,14 +270,14 @@ create `OPENING`.
 
 ### Phase 1: Foundation & Local Stack
 
-**Status**: ⬜ Pending
+**Status**: ✅ Completed
 **Objective**: Runnable NestJS-on-Bun service with strict TypeScript, dockerized
 PostgreSQL/LocalStack/Keycloak, config, and health endpoints.
 **Dependencies**: None
 
 **Tasks**:
 
-- [ ] T001 [US1] Scaffold project at repo root
+- [x] T001 [US1] Scaffold project at repo root
   - `package.json` scripts: `dev: bun run src/main.ts`, `validate: tsc --noEmit`,
     `test: bun test`, `test:unit: bun test tests/unit`,
     `test:integration: bun test tests/integration`,
@@ -288,35 +288,43 @@ PostgreSQL/LocalStack/Keycloak, config, and health endpoints.
     class-validator class-transformer decimal.js pino pino-http
     @aws-sdk/client-sqs prom-client`
   - devDeps: `typescript @types/node @types/bun`
-- [ ] T002 [US1] Create `tsconfig.json`
+- [x] T002 [US1] Create `tsconfig.json`
   - `"strict": true`, `"noUncheckedIndexedAccess": true`,
     `"experimentalDecorators": true`, `"emitDecoratorMetadata": true`,
     `"target": "ES2022"`, `"module": "commonjs"`, `"moduleResolution": "node"`,
     `"outDir": "dist"`, `"rootDir": "."`, include `src/**/*.ts`, `tests/**/*.ts`
-- [ ] T003 [US1] Create `docker-compose.yml`
+  - ⚠ deviated: `module: esnext` + `moduleResolution: bundler` + `types: ["bun"]`
+    (node16 → TS1479 + `bun:test` resolution failure) → see Execution Log
+- [x] T003 [US1] Create `docker-compose.yml`
   - services: `postgres` (postgres:16, env `POSTGRES_PASSWORD=local`, port 5432,
     healthcheck `pg_isready`), `localstack` (localstack/localstack:latest,
     `SERVICES=sqs`, port 4566, volume `/var/lib/localstack`), `keycloak`
     (quay.io/keycloak/keycloak:26 `start-dev --import-realm`, port 8080,
     healthcheck on `/realms/master`, volume `./keycloak/realm-export.json`)
+  - ⚠ deviated: images pinned `localstack/localstack:4.13.1` + `keycloak:26.8`
+    (tag `26` does not exist; newer LocalStack needs `LOCALSTACK_AUTH_TOKEN`);
+    ports bound to `127.0.0.1` only → see Execution Log
   - healthchecks on all three; no app container (app runs via Bun on host)
-- [ ] T004 [US1] Create `src/main.ts`
+- [x] T004 [US1] Create `src/main.ts`
   - `NestFactory.create(AppModule, { bufferLogs: true })`; global
     `ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true })`;
     global `HttpExceptionFilter`; `app.enableShutdownHooks()`; listen `PORT` (default
     3000)
-- [ ] T005 [US1] Create `src/app.module.ts` root module
+  - ⚠ deviated (review round 2): pipe/filter registered in `AppModule` via
+    `APP_PIPE`/`APP_FILTER` (so integration tests cover the wiring); `listen(PORT, HOST)`
+    with `HOST` default `127.0.0.1` → see Execution Log
+- [x] T005 [US1] Create `src/app.module.ts` root module
   - imports: `ConfigModule.forRoot({ isGlobal: true, validate: validateEnv })`,
     `MikroOrmModule.forRootAsync({...autoLoadEntities: true, migrations: { tableName: 'mikro_orm_migrations' }})`,
     `HealthModule`; no domain modules yet
-- [ ] T006 [US1] Create `src/config/env.validation.ts` + `.env.example` + `.gitignore` entries
+- [x] T006 [US1] Create `src/config/env.validation.ts` + `.env.example` + `.gitignore` entries
   - env schema (class-validator): `DATABASE_URL`, `SQS_ENDPOINT`
     (default `http://localhost:4566`), `SQS_QUEUE_URL`, `SQS_DLQ_URL`,
     `KEYCLOAK_ISSUER`, `KEYCLOAK_AUDIENCE`, `PORT`, `LOG_LEVEL`,
     `WORKERS_ENABLED` (default `true`)
   - `.env.example` filled with local values; `.gitignore` adds `.env`,
     `node_modules/`, `dist/`
-- [ ] T007 [US1] Create `src/health/health.module.ts`, `health.controller.ts`, `health.service.ts`
+- [x] T007 [US1] Create `src/health/health.module.ts`, `health.controller.ts`, `health.service.ts`
   - `GET /health/live` → 200 `{ status: "ok" }` (process only)
   - `GET /health/ready` → `SELECT 1` via `em`; 200 `{ postgres: "ok" }` / 503 on
     failure (SQS probe added in Phase 8 readiness task)
@@ -857,14 +865,14 @@ redacted logs, prometheus metrics, full readiness.
 ## ✅ Master Checklist
 
 ### Phase 1: Foundation & Local Stack
-- [ ] T001 [US1] Scaffold Bun+NestJS project (`package.json` + scripts)
-- [ ] T002 [US1] Strict `tsconfig.json`
-- [ ] T003 [US1] `docker-compose.yml` (PostgreSQL, LocalStack, Keycloak)
-- [ ] T004 [US1] `src/main.ts` bootstrap + pipes/filters + shutdown hooks
-- [ ] T005 [US1] `src/app.module.ts` root wiring
-- [ ] T006 [US1] `src/config/env.validation.ts` + `.env.example` + `.gitignore`
-- [ ] T007 [US1] Health endpoints `src/health/*` (`@Public`)
-- [ ] TypeScript validation passes (build only when explicit)
+- [x] T001 [US1] Scaffold Bun+NestJS project (`package.json` + scripts)
+- [x] T002 [US1] Strict `tsconfig.json`
+- [x] T003 [US1] `docker-compose.yml` (PostgreSQL, LocalStack, Keycloak)
+- [x] T004 [US1] `src/main.ts` bootstrap + pipes/filters + shutdown hooks
+- [x] T005 [US1] `src/app.module.ts` root wiring
+- [x] T006 [US1] `src/config/env.validation.ts` + `.env.example` + `.gitignore`
+- [x] T007 [US1] Health endpoints `src/health/*` (`@Public`)
+- [x] TypeScript validation passes (build only when explicit)
 
 ### Phase 2: Domain Core & Events
 - [ ] T008 [US2] `src/domain/money/money.ts`
@@ -961,3 +969,266 @@ Key resolved decisions (applied to this plan):
   `failureCode: CURRENCY_MISMATCH` integration case → T029.
 
 Deferred open points: none — no `[NEEDS CLARIFICATION]` markers remain.
+
+---
+
+## Execution Log
+
+### 2026-10-06 — Phase 1 (Foundation & Local Stack) executed via TDD
+
+**Tasks completed (fully):** T001, T002, T003, T004, T005, T006, T007
+**Tasks completed (partially):** none
+**Tasks not executed in this run:** none (all Phase 1 tasks)
+
+**TDD slices:** T006 RED→GREEN (`tests/unit/config/env.validation.spec.ts`,
+5 pass); T007 RED→GREEN (`tests/unit/health/health.service.spec.ts`); T004/T005
+integration RED→GREEN (`tests/integration/bootstrap.spec.ts`, 2 pass:
+`GET /health/live` 200 `{"status":"ok"}`, `GET /health/ready` 200
+`{"postgres":"ok"}` against the running docker stack).
+
+**Unplanned changes:**
+- `src/common/http/exception.filter.ts` — created in Phase 1 (T004 requires a
+  global `HttpExceptionFilter` in `main.ts`); the plan schedules its full
+  status-mapping body under T028 (Phase 4).
+- `src/auth/public.decorator.ts` — created in Phase 1 (T007 requires `@Public()`
+  markers); the plan schedules it under T044 (Phase 8).
+- `devDependency @types/express` — added; `exception.filter.ts` imports express types.
+- `keycloak/realm-export.json` — placeholder realm `wagering` created now because
+  T003 mounts it as a volume; full realm (client/roles/users) is T043 (Phase 8).
+
+**Implementation deviations:**
+- T001 — `@nestjs/config` added to deps: the T001 dep list omitted it, but T005
+  mandates `ConfigModule.forRoot`.
+- T002 — final `tsconfig.json` uses `"module": "esnext"`,
+  `"moduleResolution": "bundler"`, `"types": ["bun"]` instead of the plan's
+  `"module": "commonjs"` / `"moduleResolution": "node"`: a node16 attempt caused
+  TS1479 CJS/ESM errors and bun:test resolution failure.
+  `experimentalDecorators` + `emitDecoratorMetadata` kept (required by Bun for
+  NestJS constructor DI).
+- T003 — image pins: `localstack/localstack:4.13.1` (plan said `latest`;
+  2026.9.0+ refuses to start without `LOCALSTACK_AUTH_TOKEN`) and
+  `quay.io/keycloak/keycloak:26.8` (plan's tag `26` does not exist).
+  `docker compose config -q` and `docker compose up -d --wait` both exit 0;
+  all 3 containers healthy.
+
+**Environment decisions:**
+- Native PostgreSQL 18 Windows service (`D:\PostgreSQL`, port 5432) conflicted
+  with Docker postgres on host 5432; user approved stopping service
+  `postgresql-x64-18` during development — Docker keeps 5432, `DATABASE_URL`
+  stays `localhost:5432`.
+- Bun upgraded 1.3.14 → 1.4.2 (1.3.14 did not apply tsconfig
+  `experimentalDecorators`/`emitDecoratorMetadata` on `bun run`, breaking NestJS
+  constructor DI with `paramtypes=[null]`).
+- MikroORM v7 + `@mikro-orm/nestjs` 7.1.0: default (unnamed) EntityManager
+  provider is registered under the `EntityManager` class token;
+  `@InjectEntityManager()` without args yields token `"undefined_EntityManager"`
+  and fails DI — must use `@Inject(EntityManager)` with a value (non-type-only)
+  import.
+- MikroORM v7: `discovery.warnWhenNoEntities: false` needed (v7 throws when
+  zero entities); `driver: PostgreSqlDriver` set at the `forRootAsync` options
+  level; `autoLoadEntities: true`.
+
+**Verification evidence (2026-10-06, all fresh):**
+- `docker compose ps` → postgres / localstack / keycloak all `Up (healthy)`.
+- `bun test` → 10 pass / 0 fail across 3 files.
+- `bun run validate` (`tsc --noEmit`) → exit 0.
+- Dev-server smoke: `bun run dev` + `GET /health/live` 200,
+  `GET /health/ready` 200, Keycloak `http://localhost:8080/realms/wagering` 200.
+- `.env.example` copied to local `.env` (gitignored).
+
+**Files changed:** `.env.example`, `.gitignore`, `bun.lock`, `docker-compose.yml`,
+`keycloak/realm-export.json`, `package.json`, `tsconfig.json`, `src/app.module.ts`,
+`src/main.ts`, `src/common/http/exception.filter.ts`,
+`src/health/{module,controller,service}.ts`, `src/auth/public.decorator.ts`,
+`src/config/env.validation.ts`, `tests/unit/config/env.validation.spec.ts`,
+`tests/unit/health/health.service.spec.ts`, `tests/integration/bootstrap.spec.ts`
+
+**Documentation updates:** `docs/architecture.md`, `docs/environments.md`,
+`docs/glossary.md`, `docs/infrastructure.md`, `docs/integrations.md`
+(status lines moved from spec-only to implemented-vs-planned),
+this plan (status + Execution Log), and
+`docs/solutions/patterns/backend/bootstrap-nestjs-on-bun-mikroorm.md` (new pattern).
+
+### 2026-10-06 — Phase 1 review round (`/pwf-review`, 7 agents)
+
+**Agents:** `nestjs-reviewer`, `security-sentinel`, `kieran-typescript-reviewer`,
+`code-simplicity-reviewer`, `architecture-strategist`, `learnings-researcher`,
+`workflow/lint`. Verdict: **no Critical findings**; fixes applied before commit:
+
+- Compose host ports bound to `127.0.0.1` only (postgres/localstack/keycloak) —
+  closes LAN exposure and makes the `docs/integrations.md` "not internet-exposed"
+  claim true.
+- `PORT` validation hardened: `@Min(1) @Max(65535)` (empty/`0`/out-of-range now
+  fail boot instead of silently binding an ephemeral port); `src/main.ts` reads
+  the validated value via `ConfigService.getOrThrow('PORT')` and
+  `bootstrap().catch(...)` exits 1 (no lost buffered logs).
+- `clientUrl: config.getOrThrow<string>('DATABASE_URL')`; factory-level `driver`
+  duplicate removed (options-level `driver: PostgreSqlDriver` is the one
+  `createEntityManager` reads).
+- `exception.filter.ts` rewritten with a field allowlist
+  (`message`/`error`/`errorCode` only — never spread), `statusCode` always from
+  `getStatus()`, and `Logger` warn/error per request line; covered by new
+  `tests/unit/common/http/exception.filter.spec.ts` (RED→GREEN, incl. leak +
+  statusCode-precedence cases).
+- `ServiceUnavailableException(..., { cause: error })` preserves the root cause;
+  dead `@IsOptional()` removed from the four defaulted env fields; `WORKERS_ENABLED`
+  transform collapsed to one ternary.
+- `package.json` gains `"engines": { "bun": ">=1.4.2" }` (G1 floor); integration
+  `beforeAll` timeout 15s (cold-start protection); `let app: INestApplication | undefined`.
+- Pattern doc: required-vs-optional env-var checklist wording corrected, harness
+  pointer made line-rot-proof, `main.ts`/factory snippets synced; plan T002/T003
+  task text annotated with deviation pointers.
+
+**Gates after fixes:** `bun run validate` exit 0 · `bun test` 16 pass / 0 fail ×2 ·
+`docker compose config -q` exit 0 · stack recreated, 3/3 healthy on loopback ·
+dev smoke live 200 / ready 200.
+
+### 2026-10-06 — Phase 1 focused re-review round 2 (fix round applied)
+
+**Agents:** `review/security-sentinel` + `review/kieran-typescript-reviewer` re-run on the
+fix-round delta. Verdict: **no Critical findings**; Changes Requested on round-1 gaps.
+Fixes applied (TDD — RED first, then GREEN):
+
+- **`HOST` env added** (`@IsIn(['127.0.0.1', '0.0.0.0'])`, default `127.0.0.1`) and
+  `app.listen(port, host)` — the app itself is now loopback-only (verified live:
+  `netstat` → `127.0.0.1:3000 LISTENING`), completing the compose-side loopback
+  binding that round 2 flagged as undermined by `0.0.0.0`.
+- **`PORT` → `@IsInt()`** (rejects `3000.5`; boundaries 1/65535 tested);
+  `DATABASE_URL` must match `postgres(ql)?://` (fails fast with an actionable message
+  instead of dying inside `MikroOrmModule.init`); `LOG_LEVEL` typed as its literal union.
+- **`exception.filter.ts`**: 5xx responses now log `cause` + stack server-side (a DB
+  outage previously logged only `GET /health/ready -> 503`); instance-level `errorCode`
+  merged for string-body exceptions (T028 error contract); `headersSent` guard before
+  writing; `method`/`url` log-line fallbacks.
+- **Wiring moved to DI**: global pipe/filter registered in `AppModule` via `APP_PIPE` +
+  `APP_FILTER useExisting` (class kept in `providers`), so the integration harness
+  exercises the real registration; new integration test asserts `GET /unknown` → 404
+  body has exactly `{statusCode, message, error}` (allowlist contract end-to-end) and
+  that `HttpExceptionFilter` resolves via `app.get()`.
+- **Test hardening**: `health.service.spec` asserts `getStatus() === 503` and `cause`
+  preservation; integration `afterAll` timeout 15s, `baseUrl` initialized, `AddressInfo`
+  narrowing guard (no `as` cast); filter spec covers `errorCode` (string + subclass
+  options) and the `headersSent` no-write path; env spec covers `WORKERS_ENABLED`
+  garbage, `HOST` accept/reject, DB scheme, PORT float/boundaries.
+- **Misc**: keycloak realm mount `:ro`; `.env.example` documents `HOST` and the
+  accepted `WORKERS_ENABLED` values; bootstrap failure path flushes buffered logs
+  before `process.exit(1)`; integration hook timeout 15s (round-1 cold-start flake).
+
+**Gates after round-2 fixes:** `bun run validate` exit 0 · `bun test` **26 pass / 0 fail**
+(4 files) · `docker compose config -q` exit 0 · dev smoke live 200 / ready 200 bound to
+`127.0.0.1:3000` only.
+
+**Still deferred (recommendations, not applied):** Keycloak admin credential
+parameterization (local-only creds, loopback-published), `@nestjs/throttler` + `helmet` +
+`X-Powered-By` disable (Phase 4), `IS_PUBLIC_KEY` consumption regression test (lands with
+the Phase 8 guard), linter (OxLint) as separate chore, `.gitignore` expansion before
+T043, `bun audit` wired into CI (reviewer ran it: 198 packages, 0 vulnerabilities),
+readiness probes for SQS/Keycloak (plan T047), HTTPS/`trust proxy` for non-local envs.
+
+### 2026-10-06 — Phase 1 focused re-review round 3 (second fix round applied)
+
+**Agents:** `review/security-sentinel` + `review/kieran-typescript-reviewer` re-run on
+the round-2 delta. Verdict: **no Critical findings**; fixes applied (TDD):
+
+- `headersSent` guard moved **after** logging — post-stream failures still emit the 5xx
+  log (line + cause + stack); only the response write is skipped. Spec covers
+  "logs but does not write".
+- 5xx logging now test-covered via `Logger.prototype` spies: `cause=` + stack asserted,
+  non-Error string causes logged too, credentials in cause messages redacted
+  (`user:pass@` → `//***@`), and log lines use the pathname only (query strings —
+  potential tokens/PII — are dropped).
+- Integration spec proves global wiring through
+  `app.get(ApplicationConfig).getGlobalFilters()` / `.getGlobalPipes()` (filter is an
+  `HttpExceptionFilter`, pipe is a `ValidationPipe`). ⚠ institutional finding:
+  `app.get(APP_FILTER)` on the enhancer token makes Bun 1.4.2 **exit(1) silently**
+  (no error, no output) — recorded as an anti-pattern in the pattern doc; the
+  `@nestjs/core/application-config` deep import is allowed by the package `exports`
+  map and is the supported assertion path.
+- `health.service.spec` uses `instanceof` narrowing instead of unsound `unknown`→T
+  casts; integration adds a boot guard, `listen(0, '127.0.0.1')` (loopback even in
+  tests), and a comment explaining why `AppModule` imports must stay dynamic
+  (ConfigModule validates env at module-evaluation time; static imports hoist above
+  the `??=` defaults).
+- `DATABASE_URL` regex tightened to `^postgres(ql)?:\/\/\S+$` (case-insensitive;
+  scheme-only URLs rejected) with accept/reject spec cases; filter uses an `isRecord`
+  type guard instead of a bare cast; `HOST` rejects `''`/`localhost`/`::` (spec).
+
+**Gates after round-3 fixes:** `bun run validate` exit 0 · `bun test` **32 pass / 0 fail**
+(4 files) · `docker compose config -q` exit 0.
+
+**Still deferred (round-3 additions):** `test:concurrency` points at `tests/concurrency`,
+which the plan creates later (T030–T032) — script intentionally ahead of the suite;
+pino/pino-http logger injection into the filter decided at T045 (prototype spies work
+until then); `HOST=0.0.0.0` must be set explicitly in any container/K8s task definition
+(default is fail-closed loopback by design); log-volume controls arrive with
+`@nestjs/throttler` (Phase 4).
+
+### 2026-10-06 — Phase 1 focused re-review round 4 (third fix round applied)
+
+**Agents:** `review/security-sentinel` + `review/kieran-typescript-reviewer` re-run on
+the round-3 delta. Verdict: **no Critical findings**; fixes applied (TDD):
+
+- **Absolute-form request targets** (`GET https://user:pass@host/path?x=1 HTTP/1.1`)
+  previously bypassed the pathname-only fix and logged credentials verbatim — the
+  filter now derives the pathname via origin-form passthrough or
+  `new URL(target).pathname` (fallback `/`), and applies `CREDENTIALS_IN_URL`
+  redaction to the log line *and* the stack/message argument as defense in depth.
+  Two specs pin the behavior (`/path` with creds+token dropped; bare host → `/`).
+- Coverage claims made true: string causes logged with redaction
+  (`cause=postgres://***@db down`), object causes log no `cause=` suffix, 4xx
+  asserts warn-only (`errorCalls` length 0), uppercase `POSTGRES://` accepted.
+  Tuple `as [string, string]` casts replaced with `?? []` + `String(...)`.
+- **ValidationPipe flags asserted behaviorally** in integration: `transform()`
+  coerces `'8080'` → `8080`, and an extraneous property rejects (whitelist +
+  forbidNonWhitelisted) — the flags are `protected` in Nest 12, so presence alone
+  was no longer the whole contract.
+- **Mutation experiments executed** (kieran's open question): removing the
+  `APP_FILTER` provider line → integration suite fails (1 fail); removing the
+  `APP_PIPE` block → fails (2 fails); restored file re-verified 37 pass.
+- `tests/unit/common/http/exception.filter.spec.ts` was **untracked** — now staged
+  (`git add`), so the filter ships with its logging/allowlist specs (count now lives
+  in this log per round, not in prose).
+- Pattern doc checklist updated to `listen(0, '127.0.0.1')` (round-3 change had
+  drifted from the checklist line).
+
+**Gates after round-4 fixes:** `bun run validate` exit 0 · `bun test` **37 pass / 0 fail**
+(4 files, 81 expects) · `docker compose config -q` exit 0 · mutations verified
+red→restored-green.
+
+### 2026-10-06 — Phase 1 focused re-review rounds 5–6 (final hardening + index sync)
+
+**Agents:** `review/security-sentinel` + `review/kieran-typescript-reviewer` (round 5),
+both re-run as the final gate (round 6 — **kieran: Approved**, security's remaining
+findings were doc-sync, closed below). Fixes applied:
+
+- **Git index resynced** (round-5 Critical: staged snapshot was the baseline while the
+  worktree carried rounds 2–4): `git add -A` after every edit; verified `git diff`
+  (unstaged) empty, `git show :src/common/http/exception.filter.ts` contains the
+  allowlist+redaction filter, `git show :src/app.module.ts` contains
+  `APP_FILTER`/`APP_PIPE`, integration spec shows all 5 tests. Round 6 re-verified:
+  26 files staged, zero untracked, index == worktree.
+- Pattern doc `listen(0)` sweep completed: source-of-truth line, Step-5 snippet
+  regenerated from the real harness (address narrowing guard without `as`,
+  `baseUrl = ''`, both hooks `15_000`, `listen(0, '127.0.0.1')`), prose key point.
+  Dead `AddressInfo` type import removed from harness + doc; Step-4 snippet now
+  carries `{ cause: error }` (the filter's `cause=` logging depends on it).
+- Filter hardening: `CREDENTIALS_IN_URL` → `/\/\/[^\s/]+@/g` (greedy to the last `@`
+  before any slash — passwordless userinfo and `@`-in-password now covered) and a
+  leading-slash guard on `new URL(target).pathname` (mailto-style targets → `/`).
+- Spec coverage added: stack/message-arg redaction, origin-form userinfo
+  line redaction (exercises the `line.replace` defense-in-depth branch), exact-line
+  assertions for bare-host/mailto targets, no-method/no-url fallback (`- / -> 500`),
+  and `toHaveLength` guards on every spy read so no spec can pass vacuously.
+- Doc drift closed: pattern doc volatile test counts replaced with count-free wording
+  (they rotted 16→40 across rounds), `useGlobal*` sentence reworded (main.ts has no
+  `useGlobal*` since round 2), environments.md variable enumeration now includes
+  `HOST`, plan "15 specs" made count-free.
+- **Known limitation accepted:** log redaction targets URL-shaped `//userinfo@` forms;
+  bare `user:pass@host` text without `//` is logged verbatim (low risk — DSNs arrive
+  URL-shaped; revisit if pino redaction lands at T045).
+
+**Final gates (round 6):** `bun run validate` exit 0 · `bun test` **41 pass / 0 fail**
+(4 files, 99 expects) · `docker compose config -q` exit 0 · dev smoke live 200 /
+ready 200 on `127.0.0.1:3000` loopback · index == worktree, no untracked files.
+
+**Next:** `/pwf-commit-changes` with task prefixes `[T001]`–`[T007]` (never auto-commit).

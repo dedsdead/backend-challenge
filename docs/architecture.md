@@ -2,9 +2,12 @@
 
 Source of truth for system architecture, technology choices, and safe-change guidance.
 The challenge specification is `../README.md`; decisions are recorded here (and in
-[decisions/](decisions/) as ADRs when created). Status: **spec-only — no application
-code yet**; technology choices are decided but not yet implemented (execution plan +
-clarifications, 2026-10-06).
+[decisions/](decisions/) as ADRs when created). Status: **foundation implemented**
+(Phase 1, 2026-10-06) — the NestJS/Bun scaffold (`src/`), local Docker stack
+(`docker-compose.yml`), env validation (`src/config/env.validation.ts` +
+`.env.example`), and health endpoints (`src/health/`) exist and pass tests; domain
+model, schema/migrations, HTTP contract, SQS ingress/egress, outbox workers, and
+JWT auth are still planned (execution plan + clarifications, 2026-10-06).
 
 **Graded deliverable note:** the challenge grades a root-level `ARCHITECTURE.md`
 (spec §14 documentation points; §2 and §4 also reference it by name). This file is the
@@ -36,6 +39,13 @@ Prescribed by the spec (not open choices): Bun 1.x, TypeScript strict, NestJS,
 PostgreSQL, AWS SQS (LocalStack/MiniStack locally), Docker Compose, versioned
 reversible migrations.
 
+Realized in Phase 1 (2026-10-06): Bun 1.4.2 (minimum — 1.3.14 does not apply
+`experimentalDecorators`/`emitDecoratorMetadata` on `bun run`, breaking NestJS
+constructor DI), TypeScript strict (`tsconfig.json`), NestJS 12.1.2, MikroORM 7.2.4
+(driver + `MikroOrmModule` wired in `src/app.module.ts`; no entities or migrations
+yet), PostgreSQL 16, LocalStack 4.13.1 (chosen over MiniStack), Keycloak 26.8 —
+versions live in `package.json` and `docker-compose.yml`.
+
 Decisions (source: execution plan + clarifications):
 
 | Choice | Options in spec | Decision |
@@ -45,8 +55,13 @@ Decisions (source: execution plan + clarifications):
 | Authentication | external IdP (e.g. Keycloak, Zitadel) or documented no-op extension point | ✅ **Keycloak** (OIDC JWT via JWKS; health + `/metrics` open) |
 | Root `ARCHITECTURE.md` | graded artifact required by spec §14 vs. this file as canonical — sync strategy | ✅ **Root summary** (see Graded deliverable note above); sync at plan T053/T054 |
 
-Legend: ✅ = decided 2026-10-06, **not yet implemented** — flip these annotations to
-"implemented" at plan T054.
+Legend: ✅ = decided 2026-10-06. Implementation state of these rows after Phase 1
+(2026-10-06): **MikroORM** — driver + `MikroOrmModule` wired in `src/app.module.ts`,
+entities, `transactional()`, and `LockMode` usage not yet written; **pessimistic row
+lock** — not yet implemented (no wallet code); **Keycloak** — local container with
+placeholder realm `keycloak/realm-export.json` only, no JWT/JWKS guard yet; **root
+`ARCHITECTURE.md`** — not yet created. Flip these annotations to "implemented" at
+plan T054.
 
 ## Module and Service Boundaries
 
