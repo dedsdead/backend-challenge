@@ -1,10 +1,13 @@
 # Integrations
 
 Source of truth for every internal and external integration: contracts, auth model,
-ownership, and failure handling. Status: **foundation only** — the local stack and
-unauthenticated health endpoints exist (Phase 1, 2026-10-06); no provider HTTP routes,
-SQS producer/consumer, outbox, or JWT auth code yet. Contracts below are prescribed by
-`../README.md` except where a row states otherwise.
+ownership, and failure handling. Status: **foundation + domain + persistence
+(Phases 1–3, 2026-10-06/07)** — the local stack, unauthenticated health endpoints,
+domain model, integration events (`src/events/`), and inbox/outbox persistence
+(`src/database/` — `inbox_message`/`outbox_message` tables, repositories, migration
+001) exist; no provider HTTP routes, SQS producer/consumer, outbox publisher, or
+JWT auth code yet. Contracts below are prescribed by `../README.md` except where a
+row states otherwise.
 
 ## Integration Catalog
 
@@ -12,9 +15,9 @@ SQS producer/consumer, outbox, or JWT auth code yet. Contracts below are prescri
 |---|---|---|---|---|
 | 1 | Game providers | inbound | HTTP `POST /wagering/transactions` + `Idempotency-Key` | prescribed by spec §9 |
 | 2 | Game providers | inbound | SQS `wager-transactions.fifo` (LocalStack locally — chosen over MiniStack, pinned 4.13.1) | prescribed by spec §10; broker container up, queues not created yet (plan T034) |
-| 3 | Integration events | outbound | SQS via transactional outbox | prescribed by spec §11 |
+| 3 | Integration events | outbound | SQS via transactional outbox | prescribed by spec §11; envelope + 4 events implemented (`src/events/`, Phase 2) and `outbox_message` table/repositories implemented (Phase 3); publisher worker planned (plan T038) |
 | 4 | Identity Provider (OIDC) | inbound | HTTP | **decided: Keycloak** (2026-10-06); local container + placeholder realm `keycloak/realm-export.json` (realm `wagering`) implemented in Phase 1 — realm roles/client and JWT/JWKS validation still planned (plan T043–T044) |
-| 5 | PostgreSQL | internal | SQL | system of record; assumed temporarily unavailable |
+| 5 | PostgreSQL | internal | SQL | system of record; assumed temporarily unavailable; schema owned by migration 001 (`src/database/migrations/Migration20261007000000_InitialMigration.ts` — CHECK constraints, partial unique index, ledger immutability trigger; FK question in [infrastructure.md](infrastructure.md) → Deferred gaps) |
 
 ## Authentication and Access
 
@@ -22,7 +25,7 @@ SQS producer/consumer, outbox, or JWT auth code yet. Contracts below are prescri
 |---|---|
 | HTTP transaction API | **Keycloak** external IdP: OIDC JWT via JWKS, issuer/audience from env. Roles: `transact:write` (POST), `transact:read` (GET); missing role → `403 ROLE_FORBIDDEN`, invalid/missing token → `401 UNAUTHORIZED` (fail-closed — see Failure Modes). Never a hand-rolled user table. Not enforced yet — no global guard exists until plan T044 (only health endpoints are live today). |
 | SQS ingress | Trusted internal channel; the `providerId` inside the message still undergoes full domain validation. |
-| Health endpoints (`/health/live`, `/health/ready`) | Unauthenticated (explicitly out of auth scope, spec §2) — implemented with `@Public()` on both handlers in `src/health/health.controller.ts`; the global JWT guard that consumes it lands in plan T044. |
+| Health endpoints (`/health/live`, `/health/ready`) | Unauthenticated (explicitly out of auth scope, spec §2) — implemented with `@Public()` on both handlers in `src/health/health.controller.ts`; readiness runs `SELECT 1` through the injected MikroORM `EntityManager` (`src/health/health.service.ts`); the global JWT guard that consumes `@Public()` lands in plan T044. |
 | `GET /metrics` | Unauthenticated by design — intentional Prometheus scrape (aggregate counters/histograms only, no PII or financial payloads; assume network-restricted); planned as the only `@Public` endpoint besides health (plan T046, not yet implemented). |
 | Outbound events | Internal channel; consumers must tolerate duplicate delivery (at-least-once). |
 | PostgreSQL | Not internet-exposed; accessed only from the app network. |
@@ -60,7 +63,9 @@ Flow: enqueue → consumer runs the same use case as HTTP → inbox dedup by
 | `WalletBalanceChanged` | only when the balance changes |
 | `WagerTransactionPendingReference` | referenced transaction not yet present |
 
-Envelope (`IntegrationEvent` abstract base, one concrete subclass per event):
+Envelope (`IntegrationEvent` abstract base in `src/events/integration-event.ts`,
+one concrete subclass per event in `src/events/` — all 4 events implemented in
+Phase 2; the outbox publishing pipeline that will emit them is planned):
 `eventId`, `eventType`, `aggregateId`, `correlationId`, `causationId?`, `occurredAt`
 (ISO-8601), `version`, `data`. `data` carries `MoneyProps` (decimal strings), never
 domain class instances.

@@ -257,8 +257,8 @@ create `OPENING`.
 | Phase | Name | Depends On | Status |
 |-------|------|------------|--------|
 | 1 | Foundation & Local Stack | None | ✅ Completed |
-| 2 | Domain Core & Events | Phase 1 | ⬜ Pending |
-| 3 | Persistence & Schema | Phase 2 | ⬜ Pending |
+| 2 | Domain Core & Events | Phase 1 | ✅ Completed |
+| 3 | Persistence & Schema | Phase 2 | ✅ Completed |
 | 4 | Use Case & HTTP API | Phase 3 | ⬜ Pending |
 | 5 | Concurrency Hardening | Phase 4 | ⬜ Pending |
 | 6 | SQS Ingestion | Phase 4 | ⬜ Pending |
@@ -339,45 +339,45 @@ PostgreSQL/LocalStack/Keycloak, config, and health endpoints.
 
 ### Phase 2: Domain Core & Events
 
-**Status**: ⬜ Pending
+**Status**: ✅ Completed
 **Objective**: Pure, fully-tested domain model per spec §6 plus the §11 event
 envelope — no ORM/Nest imports.
 **Dependencies**: Phase 1
 
 **Tasks**:
 
-- [ ] T008 [US2] Create `src/domain/money/money.ts`
+- [x] T008 [US2] Create `src/domain/money/money.ts`
   - `private constructor(private readonly value: Decimal, public readonly currency: string)`
   - static `from({amount, currency})`, `zero(currency)`; methods `add`, `subtract`,
     `negate`, `isZero`, `isPositive`, `isNegative`, `isLessThan`, `equals`,
     `toJSON(): MoneyProps`, `toString()`; private `assertSameCurrency`
   - validation in `from`: reject `NaN`/`Infinity`/scientific notation/empty string/
     scale > 2/negative when entry-contract disallows; enforce scale-2 canonical form
-- [ ] T009 [US2] Create `src/domain/enums.ts`
+- [x] T009 [US2] Create `src/domain/enums.ts`
   - `WagerTransactionKind { Opening="OPENING", Bet="BET", Win="WIN", Loss="LOSS",
     Refund="REFUND", Rollback="ROLLBACK" }`,
     `WagerTransactionStatus { Pending, PendingReference, Processed, Rejected, Failed }`
     with spec string values, `LedgerDirection { Debit="DEBIT", Credit="CREDIT" }`
-- [ ] T010 [US2] Create `src/domain/failure-codes.ts`
+- [x] T010 [US2] Create `src/domain/failure-codes.ts`
   - `FailureCode` enum with the 10 codes from Proposed Solution + exported
     `FAILURE_CODE_DESCRIPTIONS: Record<FailureCode, string>`
-- [ ] T011 [US2] Create `src/domain/errors.ts`
+- [x] T011 [US2] Create `src/domain/errors.ts`
   - classes: `DomainError` (base, carries optional `failureCode`), `ValidationError`,
     `InsufficientFundsError`, `CurrencyMismatchError`,
     `InvalidTransactionStateError`, `ReferenceResolutionError`,
     `IdempotencyConflictError`, `WalletExistsError`, `NotFoundError`
-- [ ] T012 [US2] Create `src/domain/wallet/wallet.ts`
+- [x] T012 [US2] Create `src/domain/wallet/wallet.ts`
   - private ctor; static `open({id, playerId, initialBalance})`, `rehydrate(state)`
   - getters `balance`, `version`, `updatedAt`; methods
     `debit(money, at): LedgerMovement`, `credit(money, at): LedgerMovement` where
     `LedgerMovement = { direction, money, balanceBefore, balanceAfter }`; debit
     throws `InsufficientFundsError` if result < 0; both bump `_version` and
     `_updatedAt`; private `assertSameCurrency`
-- [ ] T013 [US2] Create `src/domain/ledger/wallet-ledger-entry.ts`
+- [x] T013 [US2] Create `src/domain/ledger/wallet-ledger-entry.ts`
   - private ctor; static `create(props)` validates
     `balanceBefore ± money === balanceAfter` (throws `ValidationError` otherwise),
     `rehydrate(state)`; `isBalanced()`; no setters, no transition methods
-- [ ] T014 [US2] Create `src/domain/wager-transaction/wager-transaction.ts`
+- [x] T014 [US2] Create `src/domain/wager-transaction/wager-transaction.ts`
   - private ctor; static `create(props)` (created as `PENDING`; requires
     `referenceExternalTransactionId` for `REFUND`/`ROLLBACK`; rejects `OPENING` when
     `source !== "internal"`), `rehydrate(state)`
@@ -388,13 +388,13 @@ envelope — no ORM/Nest imports.
     `requiresReference`, `matchesPayload(hash)`,
     `ledgerDirectionFor(reference)` (inverse for `ROLLBACK`)
   - field `resultBalance?: Money` set once per stored outcome (replay snapshot, §7.7)
-- [ ] T015 [US2] Create `src/domain/inbox/inbox-message.ts` and `src/domain/outbox/outbox-message.ts`
+- [x] T015 [US2] Create `src/domain/inbox/inbox-message.ts` and `src/domain/outbox/outbox-message.ts`
   - `InboxMessage.receive({messageId, consumerName, payloadHash, receivedAt})`,
     `markProcessed(at)`, `isProcessed()`
   - `OutboxMessage.enqueue(event)`, `markPublished(at)`,
     `scheduleRetry(now)` → `attempts++`,
     `nextAttemptAt = now + min(2^attempts * 1s, 5min)`, `isPending()`, `isDue(now)`
-- [ ] T016 [US2] Create event envelope `src/events/`
+- [x] T016 [US2] Create event envelope `src/events/`
   - `integration-event.ts`: `abstract class IntegrationEvent<T>` with
     `abstract readonly eventType: string`, `abstract readonly version: number`,
     ctor fields `eventId, aggregateId, correlationId, causationId?, occurredAt,
@@ -408,7 +408,7 @@ envelope — no ORM/Nest imports.
     `version = 1` on the type, static `from(...)` factories; `data` payloads use
     `MoneyProps` strings only (e.g. `WalletBalanceChangedData { walletId,
     transactionId, direction, money, balanceBefore, balanceAfter, walletVersion }`)
-- [ ] T017 [US2] Create unit tests `tests/unit/domain/*.spec.ts` (bun:test)
+- [x] T017 [US2] Create unit tests `tests/unit/domain/*.spec.ts` (bun:test)
   - `money.spec.ts`: scale-2 canonicalization, all rejected input classes, currency
     mismatch throws, immutability of ops
   - `wallet.spec.ts`: OPENING balance, debit insufficient throws, version bump only
@@ -428,14 +428,14 @@ envelope — no ORM/Nest imports.
 
 ### Phase 3: Persistence & Schema
 
-**Status**: ⬜ Pending
+**Status**: ✅ Completed
 **Objective**: Database schema with DB-enforced invariants (spec §5.9) and
 repository/mapper layer connecting domain to MikroORM.
 **Dependencies**: Phase 2
 
 **Tasks**:
 
-- [ ] T018 [US3] Create MikroORM entities in `src/database/entities/`
+- [x] T018 [US3] Create MikroORM entities in `src/database/entities/`
   - `wallet.entity.ts`: `id` uuid PK, `player_id`, `currency char(3)`,
     `balance_amount numeric(20,2)`, `version int`, `created_at`, `updated_at`;
     `@Unique({ name: 'uq_wallet_player_currency', properties: ['playerId','currency'] })`;
@@ -457,11 +457,11 @@ repository/mapper layer connecting domain to MikroORM.
     `outbox-message.entity.ts`: `aggregate_id`, `event_type`, `payload jsonb`,
     `occurred_at`, `attempts`, `next_attempt_at`, `published_at`;
     `@Index(['publishedAt','nextAttemptAt'])`
-- [ ] T019 [US3] Create `src/database/mikro-orm.config.ts`
+- [x] T019 [US3] Create `src/database/mikro-orm.config.ts`
   - entities `./entities/*.ts`, migrations `./migrations`, `dbName` from
     `DATABASE_URL`, `driver: 'postgresql'`, `forceUtcTimezone: true`, no schema push
     (migrations only)
-- [ ] T020 [US3] **Generate migration 001 → drift-check → run locally IMMEDIATELY (atomic chain — ORM migration discipline)**
+- [x] T020 [US3] **Generate migration 001 → drift-check → run locally IMMEDIATELY (atomic chain — ORM migration discipline)**
   - `bun run mikro-orm migration:create` from entity diff; review generated SQL in
     `src/database/migrations/`
   - add to the migration: ledger immutability trigger
@@ -472,11 +472,11 @@ repository/mapper layer connecting domain to MikroORM.
     `down()` must drop trigger + index + tables + enums
   - **run immediately**: `bun run mikro-orm migration:up` against local compose PG;
     then `bun run mikro-orm migration:check` (drift) must pass
-- [ ] T021 [US3] Create `src/database/mappers.ts`
+- [x] T021 [US3] Create `src/database/mappers.ts`
   - `WalletMapper`, `WagerTransactionMapper` (incl. `result_balance_*` → `Money`),
     `LedgerEntryMapper`, `InboxMapper`, `OutboxMapper` — domain ⇄ entity both
     directions
-- [ ] T022 [US3] Create repositories in `src/database/repositories/`
+- [x] T022 [US3] Create repositories in `src/database/repositories/`
   - `wallet.repository.ts`: `findById(em, id)`,
     `findByIdForUpdate(em, id)` (caller must already be inside `em.transactional`;
     `lockMode: LockMode.PESSIMISTIC_WRITE`)
@@ -488,7 +488,7 @@ repository/mapper layer connecting domain to MikroORM.
   - `inbox.repository.ts`: insert with unique-violation detection helper
   - `outbox.repository.ts`: `insert`, `claimDueBatch(em, limit)` (raw `em.execute`
     with `FOR UPDATE SKIP LOCKED` — used in Phase 7), `markPublished`, `scheduleRetry`
-- [ ] T023 [US3] Create integration tests `tests/integration/schema.spec.ts`
+- [x] T023 [US3] Create integration tests `tests/integration/schema.spec.ts`
   - against real compose PostgreSQL: unique constraints reject duplicates (wallet
     player+currency, idempotency key, provider+external, inbox pair), partial unique
     index `uq_wager_tx_reference_kind` rejects a second `PROCESSED` same-kind
@@ -875,26 +875,26 @@ redacted logs, prometheus metrics, full readiness.
 - [x] TypeScript validation passes (build only when explicit)
 
 ### Phase 2: Domain Core & Events
-- [ ] T008 [US2] `src/domain/money/money.ts`
-- [ ] T009 [US2] `src/domain/enums.ts`
-- [ ] T010 [US2] `src/domain/failure-codes.ts`
-- [ ] T011 [US2] `src/domain/errors.ts`
-- [ ] T012 [US2] `src/domain/wallet/wallet.ts`
-- [ ] T013 [US2] `src/domain/ledger/wallet-ledger-entry.ts`
-- [ ] T014 [US2] `src/domain/wager-transaction/wager-transaction.ts`
-- [ ] T015 [US2] Inbox + Outbox domain `src/domain/{inbox,outbox}/*.ts`
-- [ ] T016 [US2] Event envelope `src/events/*` (§11)
-- [ ] T017 [US2] Unit tests `tests/unit/domain/*.spec.ts`
-- [ ] TypeScript validation passes (build only when explicit)
+- [x] T008 [US2] `src/domain/money/money.ts`
+- [x] T009 [US2] `src/domain/enums.ts`
+- [x] T010 [US2] `src/domain/failure-codes.ts`
+- [x] T011 [US2] `src/domain/errors.ts`
+- [x] T012 [US2] `src/domain/wallet/wallet.ts`
+- [x] T013 [US2] `src/domain/ledger/wallet-ledger-entry.ts`
+- [x] T014 [US2] `src/domain/wager-transaction/wager-transaction.ts`
+- [x] T015 [US2] Inbox + Outbox domain `src/domain/{inbox,outbox}/*.ts`
+- [x] T016 [US2] Event envelope `src/events/*` (§11)
+- [x] T017 [US2] Unit tests `tests/unit/domain/*.spec.ts`
+- [x] TypeScript validation passes (build only when explicit)
 
 ### Phase 3: Persistence & Schema
-- [ ] T018 [US3] MikroORM entities `src/database/entities/*` (uniques + CHECK + snapshots + reversal partial index)
-- [ ] T019 [US3] `src/database/mikro-orm.config.ts`
-- [ ] T020 [US3] Migration 001 + ledger trigger — **generate → drift-check → run locally IMMEDIATELY (atomic chain)**
-- [ ] T021 [US3] `src/database/mappers.ts`
-- [ ] T022 [US3] Repositories `src/database/repositories/*` (incl. `FOR UPDATE`)
-- [ ] T023 [US3] Schema integration tests `tests/integration/schema.spec.ts`
-- [ ] TypeScript validation passes (build only when explicit)
+- [x] T018 [US3] MikroORM entities `src/database/entities/*` (uniques + CHECK + snapshots + reversal partial index)
+- [x] T019 [US3] `src/database/mikro-orm.config.ts`
+- [x] T020 [US3] Migration 001 + ledger trigger — **generate → drift-check → run locally IMMEDIATELY (atomic chain)**
+- [x] T021 [US3] `src/database/mappers.ts`
+- [x] T022 [US3] Repositories `src/database/repositories/*` (incl. `FOR UPDATE`)
+- [x] T023 [US3] Schema integration tests `tests/integration/schema.spec.ts`
+- [x] TypeScript validation passes (build only when explicit)
 
 ### Phase 4: Use Case & HTTP API
 - [ ] T024 [US4] Money DTO + `payload-hash.ts` canonical JSON
@@ -1232,3 +1232,133 @@ findings were doc-sync, closed below). Fixes applied:
 ready 200 on `127.0.0.1:3000` loopback · index == worktree, no untracked files.
 
 **Next:** `/pwf-commit-changes` with task prefixes `[T001]`–`[T007]` (never auto-commit).
+
+### 2026-10-07 — Phases 2 (Domain Core & Events) + 3 (Persistence & Schema) completed; fast-path T022 hardening session
+
+**Tasks completed (fully):** T008, T009, T010, T011, T012, T013, T014, T015, T016,
+T017 (Phase 2, executed 2026-10-06 evening); T018, T019, T020, T021, T022, T023
+(Phase 3, executed 2026-10-06/07)
+**Tasks completed (partially):** none
+**Tasks not executed in this run:** none for Phases 2–3; Phase 4+ (T024–T055)
+untouched — all still ⬜ Pending.
+
+**Phase 2 (2026-10-06):** pure domain (`money`, `enums`, `failure-codes`, `errors`,
+`wallet`, `wallet-ledger-entry`, `wager-transaction`, `inbox`/`outbox`) + `src/events/`
+envelope with 4 concrete events; 9 unit spec files under `tests/unit/domain/` (the
+plan's 6 plus enums/errors/failure-codes/inbox-outbox extras). Landed as commits
+`[T008]`–`[T016]` (unit specs ride inside those commits — no separate `[T017]` commit;
+T017 files are tracked). The "no ORM/Nest imports" constraint held.
+
+**Phase 3 (2026-10-06/07; uncommitted — user declined commits, no `git commit` run):**
+`src/database/` — `mikro-orm.config.ts` (entities enumerated, migrations `emit: 'ts'`,
+`schemaGenerator.ignoreTriggers`, `allowGlobalContext: false`), 5 entities, migration
+001 `Migration20261007000000_InitialMigration` (ledger immutability trigger
+`trg_wallet_ledger_entry_immutable`, partial unique `uq_wager_tx_reference_kind`, CHECKs
+and uniques; `down()` drops trigger + function + tables but deliberately leaves
+`mikro_orm_migrations`), `mappers.ts`, repositories (`interfaces.ts` port +
+`mikro-orm.repositories.ts` implementations + `unique-violation.ts` + `index.ts`),
+integration suites `schema.spec.ts` (24 tests), `repositories.spec.ts`,
+`entities/*.spec.ts` (4 files). Migration ran locally in the atomic chain:
+`mikro_orm_migrations` row `Migration20261007000000_InitialMigration` applied
+2026-10-07 16:46 UTC against compose PG (`wagering` DB).
+
+**T022 coverage gap closed (fast-path session):** 8 repository methods added with
+guards (`assertUuid`/`assertPositiveInt`) and covered by
+`tests/integration/repositories.spec.ts`: `WalletRepository.findByIdForUpdate`
+(`LockMode.PESSIMISTIC_WRITE`), `WagerTransactionRepository.findPendingReferenceDue`,
+`WalletLedgerEntryRepository.pageByCursor` (keyset `(created_at, id)` descending via
+`LedgerCursor`/`LedgerPage`) + `sumByWallet`, `OutboxMessageRepository.claimDueBatch`
+(`FOR UPDATE SKIP LOCKED`) + `markPublished` + `scheduleRetry`. Tests assert the
+claim-outside-transaction rejection, retry-column round-trip, cursor-keyset paging,
+sum aggregation, and the lock gate.
+
+**Workspace hygiene:** `tsconfig.json` `include` restored to `src` + `tests` (scratch
+excludes from earlier debug work removed — file now equals the committed T002 state,
+no diff vs HEAD); scratch files removed (`src/database/test.ts`, probe
+migrations/snapshots/scripts/logs, 7 `src/test*.ts`); `.snapshot-*.json` added to
+`.gitignore`.
+
+**Critical review fixes (4 review agents):**
+- `claimDueBatch` now **throws when called outside an active transaction** (previously
+  it silently ran outside the claim contract); regression test added.
+- Wager `save()` update path now **strips DB-managed `reference_attempts` /
+  `reference_next_attempt_at`** so mapper defaults no longer erase worker-set retry
+  state; regression test added.
+- Raw SQL switched from inlined values to **`?` parameter binding** — MikroORM
+  `em.execute` drops `$1`-style params → PG `42P02` (undefined parameter).
+- Removed **5 vacuous false-green tests** (backoff/`isDue` behavior is already properly
+  covered by `tests/unit/domain/inbox-outbox.spec.ts`).
+
+**Unplanned changes:**
+- `.gitignore` — ignore MikroORM per-database schema snapshots (`.snapshot-*.json`).
+- `package.json` / `bun.lock` — added `@mikro-orm/cli` (required by T020's migration CLI
+  chain), `uuid` + `@types/uuid`; `@oxc-node/core` added but currently unused (deferred).
+- `src/app.module.ts` — factory now spreads `mikroOrmConfig` from
+  `src/database/mikro-orm.config.ts` (replaces T005's inline options incl.
+  `autoLoadEntities: true`) and layers `DATABASE_NAME/USER/PASSWORD/HOST/PORT` fallbacks.
+- `tests/integration/repositories.spec.ts` — repository behavior suite; T022 listed no
+  test task (T023 covers only `schema.spec.ts`).
+- `tests/integration/entities/{wallet,wager-transaction,wallet-ledger-entry,inbox-outbox}.entity.spec.ts`
+  — entity integration specs beyond T023's stated scope.
+
+**Implementation deviations:**
+- T019 — config enumerates entities explicitly (not the `./entities/*.ts` glob);
+  `forceUtcTimezone: true` not set; discrete `DATABASE_*` env vars instead of `dbName`
+  from `DATABASE_URL` (env contract cleanup deferred to Phase 4).
+- T018/T020 — **enums are `varchar(255)` columns, not native PG enum types** (the
+  Proposed Solution data-model bullet and T020's `down()` "drop … enums" assumed
+  `CREATE TYPE`); all CHECK/UNIQUE/trigger DB-enforcement is present as specified.
+- T022 — implemented as port interfaces + one implementations module instead of the
+  per-aggregate files named in the task; method signatures are EM-bound at construction
+  (`findByIdForUpdate(id)`) instead of `findById(em, id)`.
+- T020 — trigger and partial index verified present in the live `wagering` DB after the
+  local `migration:up`.
+
+**Deferred follow-ups (intentionally NOT done now — plan/docs must not be read as if
+these are finished):**
+- **Missing DB indexes:** `(created_at, id)` on `wallet_ledger_entry` for `pageByCursor`
+  (migration 001 only has `(wallet_id, id)`) and a partial index for the
+  `PENDING_REFERENCE` recovery query (`status` + `reference_next_attempt_at`) —
+  candidates for migration 002 (T039, Phase 7).
+- **EM/DI scope decision** — repository-per-EM instance vs shared/global context
+  (`allowGlobalContext: false` for now) pending Phase 4 wiring.
+- **`DATABASE_URL` env contract cleanup** — ORM now reads discrete
+  `DATABASE_HOST/PORT/NAME/USER/PASSWORD`; `DATABASE_URL` is still validated by T006 but
+  no longer consumed by the ORM — pending Phase 4 wiring.
+- **Unused artifacts:** `createMikroORM` export in `src/database/mikro-orm.config.ts`
+  and devDependency `@oxc-node/core` — remove or wire up later.
+- **FK open question:** plan T018 describes `wallet_ledger_entry.wallet_id` /
+  `transaction_id` as foreign keys, but migration 001 creates none (live-verified:
+  `pg_constraint` contains no `contype = 'f'`). Intent unverified — decide whether
+  this is deliberate app-level integrity (amend T018) or plan drift (add FKs in a
+  future migration), then align `docs/infrastructure.md` Deferred gap 6.
+
+**Verification evidence (2026-10-07, fresh at log time):**
+- `bun run validate` (`tsc --noEmit`) → exit 0.
+- `bun test` → **200 pass / 0 fail**, 574 expects, **19 files**, 5.09s.
+- `docker compose ps` → postgres / localstack / keycloak all `Up (healthy)`.
+- Live DB: 5 domain tables + `mikro_orm_migrations`;
+  `trg_wallet_ledger_entry_immutable` present; `uq_wager_tx_reference_kind` partial
+  index present; migration 001 row applied.
+
+**Files changed:** `.gitignore`, `package.json`, `bun.lock`, `src/app.module.ts`,
+`src/database/mikro-orm.config.ts`, `src/database/entities/*.ts` (5),
+`src/database/migrations/Migration20261007000000_InitialMigration.ts`,
+`src/database/mappers.ts`,
+`src/database/repositories/{interfaces,mikro-orm.repositories,unique-violation,index}.ts`,
+`tests/integration/repositories.spec.ts`, `tests/integration/schema.spec.ts`,
+`tests/integration/entities/*.spec.ts` (4), this plan.
+
+**Documentation updates:** this plan only — Phase 2/3 status lines, phase-table rows,
+task checkboxes, and Master Checklist verified as accurate (Phases 1–3 ✅ Completed,
+Phases 4–9 ⬜ Pending; no checkbox drift found, none changed this session) plus this
+Execution Log entry. Commit state: Phase 2 is committed (`[T008]`–`[T016]`); Phase 3
+and this session's work remain uncommitted at the user's instruction.
+
+### 2026-10-07 — Temp-dir cleanup follow-up (zero repo changes)
+
+User report "the workspace wasn't cleared, log files / test outputs still there" investigated: the repo
+was already clean (`git clean -ndx` shows no log/test-output files — the entry above's Workspace hygiene
+claim holds); leftovers were in the tool's external temp dir `Temp\opencode` (1210 files / 15.2 MB) →
+deleted to 0, no locked files. ZERO repo files changed; gates re-verified: `bun run validate` exit 0 ·
+`bun test` 200 pass / 0 fail (19 files).
