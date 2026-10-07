@@ -6,6 +6,8 @@ import { PostgreSqlDriver } from '@mikro-orm/postgresql';
 import { validateEnv } from './config/env.validation';
 import { HttpExceptionFilter } from './common/http/exception.filter';
 import { HealthModule } from './health/health.module';
+import { mikroOrmConfig } from './database/mikro-orm.config';
+import type { MikroOrmModuleAsyncOptions } from '@mikro-orm/nestjs';
 
 @Module({
   imports: [
@@ -13,13 +15,15 @@ import { HealthModule } from './health/health.module';
     MikroOrmModule.forRootAsync({
       driver: PostgreSqlDriver,
       useFactory: (config: ConfigService) => ({
-        clientUrl: config.getOrThrow<string>('DATABASE_URL'),
-        autoLoadEntities: true,
-        discovery: { warnWhenNoEntities: false },
-        migrations: { tableName: 'mikro_orm_migrations' },
+        ...mikroOrmConfig,
+        dbName: config.get<string>('DATABASE_NAME') ?? mikroOrmConfig.dbName,
+        user: config.get<string>('DATABASE_USER') ?? mikroOrmConfig.user,
+        password: config.get<string>('DATABASE_PASSWORD') ?? mikroOrmConfig.password,
+        host: config.get<string>('DATABASE_HOST') ?? mikroOrmConfig.host,
+        port: config.get<number>('DATABASE_PORT') ?? mikroOrmConfig.port,
       }),
       inject: [ConfigService],
-    }),
+    } satisfies MikroOrmModuleAsyncOptions<PostgreSqlDriver>),
     HealthModule,
   ],
   providers: [
