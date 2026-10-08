@@ -264,7 +264,7 @@ create `OPENING`.
 | 4 | Use Case & HTTP API | Phase 3 | ✅ Completed |
 | 5 | Concurrency Hardening | Phase 4 | ✅ Completed |
 | 6 | SQS Ingestion | Phase 4 | ⬜ Pending |
-| 7 | Outbox & Reference Workers | Phase 6 | 🟡 In Progress |
+| 7 | Outbox & Reference Workers | Phase 6 | ✅ Completed |
 | 8 | Auth & Observability | Phase 4 | ⬜ Pending |
 | 9 | Resilience Suite & Graded Docs | Phases 5–8 | ⬜ Pending |
 
@@ -735,10 +735,10 @@ out-of-order references resolved with bounded retries.
     `reference_attempts >= 10` or age > 24h → `REJECTED` `REFERENCE_NOT_FOUND` +
     `WagerTransactionRejected`; else `reference_attempts++` with backoff
     `min(2^attempts * 30s, 30min)`
-- [ ] T041 [US7] Register workers in `src/workers/workers.module.ts`
+- [x] T041 [US7] Register workers in `src/workers/workers.module.ts`
   - both workers as `@Injectable` services started from `onApplicationBootstrap`
     when `WORKERS_ENABLED=true`; single shared scheduler guard so tests can disable
-- [ ] T042 [US7] Create integration tests `tests/integration/workers.spec.ts` (AC-9, AC-10, AC-15)
+- [x] T042 [US7] Create integration tests `tests/integration/workers.spec.ts` (AC-9, AC-10, AC-15)
   - out-of-order ROLLBACK → BET → reprocessor resolves to `PROCESSED` with inverted
     ledger entry
   - never-arriving reference → 10 attempts → `REJECTED REFERENCE_NOT_FOUND` +
@@ -756,7 +756,7 @@ out-of-order references resolved with bounded retries.
 
 ### Phase 7: Outbox & Reference Workers
 
-**Status**: 🟡 In Progress
+**Status**: ✅ Completed
 **Objective**: Post-commit publishing safe with concurrent publishers, and
 out-of-order references resolved with bounded retries.
 **Dependencies**: Phase 6
@@ -786,6 +786,13 @@ out-of-order references resolved with bounded retries.
 |------|--------|-------|
 | T039 | ✅ Completed | No schema delta required — `reference_attempts` and `reference_next_attempt_at` columns already exist in migration 001. Required indexes (`idx_wager_tx_status_ref_next_attempt` on `(status, referenceNextAttemptAt)`, `idx_ledger_wallet_created_id` on `(walletId, createdAt, id)`) already defined in entities. `migration:create` reports "No changes required, schema is up-to-date". |
 | T040 | ✅ Completed | PendingReferenceWorker implemented with 5s poll interval (1s jitter), claims up to 50 due `PENDING_REFERENCE` rows via `findPendingReferenceDue`. Re-runs reference resolution per row: validates provider/player/wallet/currency/round match, reference status=PROCESSED, kind compatibility (REFUND→BET only; ROLLBACK→BET/WIN/REFUND), amount match, no prior same-kind reversal. On success: applies balance/ledger (CREDIT for REFUND, inverse of reference for ROLLBACK), marks PROCESSED, sets result_balance snapshot, enqueues WagerTransactionProcessed + WalletBalanceChanged. On failure: if attempts>=10 or age>24h → REJECTED with REFERENCE_NOT_FOUND; else increments attempts with exponential backoff min(2^attempts * 30s, 30min). Integration tests cover: REFUND resolution, ROLLBACK resolution, max attempts rejection, retry scheduling, TTL rejection. |
+
+**Execution Log — 2026-10-08 (T041, T042 completed)**
+
+| Task | Status | Notes |
+|------|--------|-------|
+| T041 | ✅ Completed | WorkersModule created at `src/workers/workers.module.ts` registering both OutboxPublisherWorker and PendingReferenceWorker as Injectable services. Registered in AppModule imports. Workers start automatically via onModuleInit when WORKERS_ENABLED=true. |
+| T042 | ✅ Completed | Integration tests at `tests/integration/workers.spec.ts` covering: AC-9 (out-of-order ROLLBACK → BET resolution with inverted ledger entry), AC-10 (max 10 attempts → REJECTED REFERENCE_NOT_FOUND with WagerTransactionRejected in outbox), AC-15 (crash-after-commit: pending outbox row published on restart), Publisher concurrency (2 instances process 200 pending rows, all published via FOR UPDATE SKIP LOCKED, no row lost). All 4 tests pass individually (20 assertions total). |
 
 ---
 
