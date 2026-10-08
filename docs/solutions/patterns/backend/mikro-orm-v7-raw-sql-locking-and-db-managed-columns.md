@@ -49,10 +49,10 @@ integration test that claims rows or takes a row lock.
 
 - `src/database/repositories/mikro-orm.repositories.ts` — the pattern's primary file:
   `UUID_RE` + `assertUuid`/`assertPositiveInt` (L41–L56), `findByIdForUpdate` (L67–L75),
-  wallet `save()` version strip (L86–L89), wager `save()` strip (L141–L143),
-  `sumByWallet` raw SQL (L205–L215), `claimDueBatch` tx guard + raw SQL (L298–L321)
+  wallet `save()` version strip (L86–L89), wager `save()` strip (L150–L153),
+  `sumByWallet` raw SQL (L214–L224), `claimDueBatch` tx guard + raw SQL (L316–L339)
 - `src/database/mappers.ts` — `wagerTransactionToEntity` hardcoded DB-managed columns
-  (L124–L125) vs `outboxMessageToEntity` domain-owned columns (L206–L217)
+  (L124–L125) vs `outboxMessageToEntity` domain-owned columns (L207–L218)
 - `src/database/entities/wallet.entity.ts` — `version: { version: true }` (L26–L30)
 - `tests/integration/repositories.spec.ts` — lock-contention test (L79–L116), erase
   regression (L160–L190), claim rollback affinity (L315–L350), fail-closed guard (L352–L355),
@@ -65,22 +65,22 @@ integration test that claims rows or takes a row lock.
 ## Current Implementation Snapshot
 
 - **Raw SQL** runs through `(em as unknown as SqlEntityManager).execute(sql, [params])` with
-  **`?` placeholders** (`sumByWallet` L207–L211, `claimDueBatch` L308–L318). The cast is needed
+  **`?` placeholders** (`sumByWallet` L216–L220, `claimDueBatch` L326–L336). The cast is needed
   because the injected token is plain `EntityManager` (see the bootstrap pattern), which does not
   expose `execute()`. `import type { SqlEntityManager } from '@mikro-orm/sql'` (L3) is type-only
   (`@mikro-orm/sql` is a transitive dep of `@mikro-orm/postgresql` — not in `package.json`).
 - **Guards**: `assertUuid` (L46–L50) and `assertPositiveInt` (L52–L56) run at raw-SQL boundaries
-  (`pageByCursor` L179–L180, `sumByWallet` L206, `claimDueBatch` L299) as defense-in-depth on top
+  (`pageByCursor` L188–L189, `sumByWallet` L215, `claimDueBatch` L317) as defense-in-depth on top
   of parameter binding, per the comment at L43–L45.
 - **Transaction affinity**: `claimDueBatch` takes the caller's `em` as an argument and executes
-  via `em.execute`, never `em.getConnection().execute` (comment L305–L306). Lock-bearing raw SQL
-  is preceded by a fail-closed `em.isInTransaction()` check (L300–L304) because raw SQL bypasses
+  via `em.execute`, never `em.getConnection().execute` (comment L323–L324). Lock-bearing raw SQL
+  is preceded by a fail-closed `em.isInTransaction()` check (L318–L322) because raw SQL bypasses
   MikroORM's `checkLockRequirements` (which only guards `em.findOne({ lockMode: PESSIMISTIC_WRITE })`
   — see comment L68 on `findByIdForUpdate`).
 - **DB-managed columns**: `wagerTransactionToEntity` hardcodes `referenceAttempts: 0` /
   `referenceNextAttemptAt: null` (L124–L125 — no domain field) and `walletToEntity` carries
   `version`; both are destructured out of the `em.assign` payload on the **update** path
-  (wager L143, wallet L88). The create path keeps them (they match column defaults).
+  (wager L152, wallet L88). The create path keeps them (they match column defaults).
 - **`em.getConnection().execute` is used only outside any ambient transaction**: one-off
   schema reads (`schema.spec.ts:32` `exec` helper), `TRUNCATE`/`DELETE` cleanup
   (`schema.spec.ts:62`, `repositories.spec.ts:63`), and single-statement assertions in tests.
@@ -91,13 +91,20 @@ integration test that claims rows or takes a row lock.
 
 ## Planned / Optional Extensions (If Applicable)
 
+*Implemented since this pattern was written (Phase 4, 2026-10-08):* `findByIdForUpdate`
+now has a production consumer — `src/modules/wagering/submit-transaction.use-case.ts`
+(step 3) takes the wallet lock inside `em.transactional(...)`;
+`src/database/repositories/mikro-orm.repositories.ts` also gained `findAppliedReversal`
+(used there for per-type reversal checks) and `countByWallet`
+(used by `src/modules/wallets/reconciliation.service.ts`).
+
 *Not implemented — do not assume they exist:*
 - **Phase 7 (T038)** outbox publisher will call `claimDueBatch` **inside** `em.transactional(...)`
   (or `begin()`/`rollback()`); today only the tests exercise both branches.
 - **Phase 7 reprocessor** will write `referenceAttempts`/`referenceNextAttemptAt` at the entity
   level — the spec's `patch()` helper (`repositories.spec.ts:138–146`) is the stand-in for that worker.
-- **Phase 4/5 use cases** will use `findByIdForUpdate` inside a transaction; the method exists but
-  no use case calls it yet.
+- **Phase 5 concurrency suite** (plan T030–T033) that proves contention behavior of the
+  Phase 4 lock usage is still unwritten.
 - Injecting `SqlEntityManager` directly via `@Inject(SqlEntityManager)` is possible once
   `driver: PostgreSqlDriver` is on `forRootAsync` (bootstrap pattern G3) — **not adopted**; the
   convention is `@Inject(EntityManager)` + cast at the raw-SQL call site.
@@ -145,7 +152,7 @@ Key points:
   query: parameter binding prevents injection, guards prevent nonsense rows and give an
   actionable error instead of an empty result.
 - Alias snake_case columns to camelCase in the SQL itself (`aggregate_id AS "aggregateId"`,
-  L309–L311) so the result casts cleanly to the existing `*Row` interfaces from `mappers.ts`.
+  L327–L329) so the result casts cleanly to the existing `*Row` interfaces from `mappers.ts`.
 
 ### Step 2: Transaction affinity + fail-closed lock guard — same file
 
@@ -170,7 +177,7 @@ async claimDueBatch(em: EntityManager, limit = 100): Promise<OutboxMessage[]> {
 Key points:
 - **Take the caller's `em` as a parameter** (not `this.em`) so the statement joins the caller's
   transaction. Use `em.execute`, never `em.getConnection().execute`, for anything that must run
-  inside an ambient transaction — the connection-level API does not join it (comment L305–L306).
+  inside an ambient transaction — the connection-level API does not join it (comment L323–L324).
   Proven by the rollback test: seeds + claim share one `begin()`/`rollback()` and nothing leaks
   (`repositories.spec.ts:315–350`).
 - **Raw SQL bypasses `checkLockRequirements`.** MikroORM only raises "lock not allowed outside
@@ -188,7 +195,7 @@ Key points:
 referenceAttempts: 0,
 referenceNextAttemptAt: null,
 
-// mikro-orm.repositories.ts — update path must not carry them (L141–L143):
+// mikro-orm.repositories.ts — update path must not carry them (L150–L153):
 if (existing) {
   const { referenceAttempts: _ra, referenceNextAttemptAt: _rna, ...changes } = data;
   this.em.assign(existing, changes as any);
@@ -291,7 +298,7 @@ this.em.assign(existing, changes as any);
   no transaction is intended (test setup/cleanup, standalone reads).
 - **G3 — raw SQL skips `checkLockRequirements`.** `FOR UPDATE SKIP LOCKED` without a transaction
   does not throw — it silently claims without a retained lock. The `em.isInTransaction()` guard
-  (L300–L304) is what fails closed.
+  (L318–L322) is what fails closed.
 - **G4 — `defineEntity` inference needs call-site casts.** `InferEntity`/`FilterQuery` degrade on
   the object-syntax entities, so repository code carries `{ ... } as FilterQuery<any>` (L63 etc.)
   and tests use `em.create(Entity, {...} as never) as any` (`schema.spec.ts:318`, `L474`, `L491`).
@@ -300,7 +307,7 @@ this.em.assign(existing, changes as any);
   resolves via `@mikro-orm/postgresql`'s hoisted deps; never convert it to a value import without
   adding the package.
 - **G6 — `em.execute` results are untyped.** Cast to the `*Row` interfaces from `mappers.ts`
-  (`as unknown as OutboxMessageRow[]`, L319) and go through the existing `*FromEntity` mapper —
+  (`as unknown as OutboxMessageRow[]`, L337) and go through the existing `*FromEntity` mapper —
   never hand-roll a domain object from raw rows.
 
 ## Project-Specific Constraints

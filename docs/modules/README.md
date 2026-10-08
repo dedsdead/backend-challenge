@@ -7,7 +7,8 @@ Canonical documentation for backend modules (one file per module:
 
 | Module | Description | Status |
 |---|---|---|
-| _No module docs yet — add a row when creating a file._ | | |
+| [wallets](wallets.md) | Wallet lifecycle, ledger pagination, reconciliation | Phase 4 implemented |
+| [wagering](wagering.md) | Transaction submit pipeline (idempotency, locks, references) and status lookups | Phase 4 implemented (HTTP ingress only) |
 
 ## Conventions
 

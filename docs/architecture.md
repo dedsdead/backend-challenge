@@ -2,16 +2,19 @@
 
 Source of truth for system architecture, technology choices, and safe-change guidance.
 The challenge specification is `../README.md`; decisions are recorded here (and in
-[decisions/](decisions/) as ADRs when created). Status: **foundation, domain, and
-persistence implemented** (Phases 1–3, 2026-10-06/07) — the NestJS/Bun scaffold
-(`src/`), local Docker stack (`docker-compose.yml`), env validation
-(`src/config/env.validation.ts` + `.env.example`), health endpoints
+[decisions/](decisions/) as ADRs when created). Status: **foundation, domain,
+persistence, and HTTP API implemented** (Phases 1–4, 2026-10-06/08) — the
+NestJS/Bun scaffold (`src/`), local Docker stack (`docker-compose.yml`), env
+validation (`src/config/env.validation.ts` + `.env.example`), health endpoints
 (`src/health/`), the domain model (`src/domain/` + integration events in
-`src/events/`), and the persistence layer (`src/database/` — 5 entities, mappers,
+`src/events/`), the persistence layer (`src/database/` — 5 entities, mappers,
 repository ports/implementations, migration 001 applied to the local database
-2026-10-07) exist and pass tests (200 pass / 0 fail across 19 files, 2026-10-07);
-HTTP contract, SQS ingress/egress, outbox workers, and JWT auth are still planned
-(execution plan + clarifications).
+2026-10-07), and the use-case/HTTP layer (`src/modules/wallets/`,
+`src/modules/wagering/` — atomic submit use case, spec §9 endpoints, pinned error
+contract in `src/common/http/exception.filter.ts`) exist and pass tests (353 pass
+/ 0 fail across 31 files, 2026-10-08); SQS ingress/egress, the outbox publisher,
+the concurrency test suite, and JWT auth are still planned (execution plan +
+clarifications).
 
 **Graded deliverable note:** the challenge grades a root-level `ARCHITECTURE.md`
 (spec §14 documentation points; §2 and §4 also reference it by name). This file is the
@@ -67,14 +70,19 @@ Decisions (source: execution plan + clarifications):
 | Authentication | external IdP (e.g. Keycloak, Zitadel) or documented no-op extension point | ✅ **Keycloak** (OIDC JWT via JWKS; health + `/metrics` open) |
 | Root `ARCHITECTURE.md` | graded artifact required by spec §14 vs. this file as canonical — sync strategy | ✅ **Root summary** (see Graded deliverable note above); sync at plan T053/T054 |
 
-Legend: ✅ = decided 2026-10-06. Implementation state of these rows after Phase 3
-(2026-10-07): **MikroORM** — wired in `src/app.module.ts`, with 5 entities, mappers,
+Legend: ✅ = decided 2026-10-06. Implementation state of these rows after Phase 4
+(2026-10-08): **MikroORM** — wired in `src/app.module.ts`, with 5 entities, mappers,
 and repository ports/implementations in `src/database/`; migration 001 applied;
-`LockMode.PESSIMISTIC_WRITE` used in `WalletRepository.findByIdForUpdate`
-(`em.transactional()` exercised in the integration suites); **pessimistic row lock** —
-repository method exists but no use case calls it yet (Phases 4–5); **Keycloak** —
-local container with placeholder realm `keycloak/realm-export.json` only, no
-JWT/JWKS guard yet; **root `ARCHITECTURE.md`** — not yet created. Flip these
+`LockMode.PESSIMISTIC_WRITE` used in `WalletRepository.findByIdForUpdate`, called
+inside `em.transactional()` by `SubmitTransactionUseCase`
+(`src/modules/wagering/submit-transaction.use-case.ts`); under the pinned EM/DI
+decision every wallet read also runs in a short transaction (root `EntityManager`
+as transaction factory, per-tx repositories — see
+[infrastructure.md](infrastructure.md) → Deferred gaps); **pessimistic row lock** —
+used by the Phase 4 submit path (Phase 5 concurrency suite still unwritten);
+**Keycloak** — local container with placeholder realm
+`keycloak/realm-export.json` only, no JWT/JWKS guard yet (Phase 4 endpoints run
+unauthenticated); **root `ARCHITECTURE.md`** — not yet created. Flip these
 annotations to "implemented" at plan T054.
 
 ## Module and Service Boundaries
@@ -82,8 +90,8 @@ annotations to "implemented" at plan T054.
 | Module | Responsibility | Must not |
 |---|---|---|
 | HTTP controllers | validate/transport, map status codes | contain business rules |
-| SQS consumer | envelope handling, inbox dedup, ack lifecycle | duplicate the use case logic |
-| Use case (application service) | orchestrate domain + persistence atomically | bypass domain factories |
+| SQS consumer | envelope handling, ack lifecycle (inbox dedup runs inside the use case, Phase 4) | duplicate the use case logic |
+| Use case (application service) | orchestrate domain + persistence atomically (inbox dedup, idempotency replay, wallet lock) | bypass domain factories |
 | Domain aggregates (`src/domain/`) | money math, state transitions, invariants | depend on ORM/Nest decorators |
 | Persistence layer (`src/database/`) | entities, mappers, repositories (`repositories/`), migrations (`migrations/`), constraints | weaken schema guarantees |
 | Outbox publisher | post-commit event publication | publish before commit |
@@ -104,8 +112,9 @@ SQS consumer  ───┘        │
 - **Idempotent submit**: `Idempotency-Key` + `payloadHash` (canonical JSON) → replay
   returns original result; different payload under same key = conflict.
 - **Out-of-order refs**: `REFUND`/`ROLLBACK` without its reference persists as
-  `PENDING_REFERENCE`; scheduled worker retries with backoff, then rejects with a
-  distinct `failureCode`.
+  `PENDING_REFERENCE` (submit path implemented in Phase 4); scheduled worker
+  retries with backoff, then rejects with a distinct `failureCode` (worker
+  planned, Phase 7).
 - **Reconciliation**: recomputes balance from ledger, reports divergence (never
   silently corrects).
 

@@ -36,8 +36,11 @@ Phases 2–9.
 ## Source of Truth Files
 
 - `tsconfig.json` — decorator metadata + Bun module resolution (L5–L9, L14)
-- `src/app.module.ts` — `ConfigModule.forRoot` (L14), `MikroOrmModule.forRootAsync` (L15–L26;
-  the factory spreads `mikroOrmConfig` from `src/database/mikro-orm.config.ts`, Phase 3)
+- `src/app.module.ts` — `ConfigModule.forRoot` (L43), `MikroOrmModule.forRootAsync`
+  (L44–L55; the factory spreads `mikroOrmConfig` from
+  `src/database/mikro-orm.config.ts`, Phase 3); Phase 4 added the `WalletsModule` /
+  `WageringModule` imports and the `ValidationPipe` flags + `exceptionFactory`
+  (L60–L80)
 - `src/database/mikro-orm.config.ts` — shared options object (entities, migrations,
   `schemaGenerator.ignoreTriggers`, `allowGlobalContext: false`) read by both Nest DI and
   the `mikro-orm` CLI (Phase 3)
@@ -55,8 +58,10 @@ Phases 2–9.
   - `node_modules/@mikro-orm/core/utils/Configuration.js` (L436–L437)
   - `node_modules/@nestjs/config/dist/config.module.js` (`options.validate(config)` L52–L55)
 - Session record: `docs/plans/20261006111327-full-wagering-processor-plan.md` → "Execution Log" →
-  `2026-10-06 — Phase 1` (Bun upgrade, MikroORM deviations, verification evidence) and
-  `2026-10-07 — Phases 2 + 3` (entities/migrations/repositories, app.module factory spread)
+  `2026-10-06 — Phase 1` (Bun upgrade, MikroORM deviations, verification evidence),
+  `2026-10-07 — Phases 2 + 3` (entities/migrations/repositories, app.module factory spread), and
+  `2026-10-08 — Phase 4` (wallets/wagering modules, exception-filter rewrite, pinned
+  EM/DI decision)
 
 ## Current Implementation Snapshot
 
@@ -73,9 +78,12 @@ Phases 2–9.
   (entities, migrations, `schemaGenerator.ignoreTriggers`, `allowGlobalContext: false`)
   and layers `DATABASE_NAME` / `DATABASE_USER` / `DATABASE_PASSWORD` / `DATABASE_HOST` /
   `DATABASE_PORT` over the config defaults — the ORM does **not** parse `DATABASE_URL`
-  (known env-contract split, deferred to Phase 4; `docs/infrastructure.md` → Deferred
-  gaps). Global `ValidationPipe` and
-  `HttpExceptionFilter` are registered as DI providers — `{ provide: APP_PIPE, useValue }`
+  (known env-contract split — still open after Phase 4; `docs/infrastructure.md` →
+  Deferred gaps). Global `ValidationPipe` (`whitelist` + `forbidNonWhitelisted` +
+  `transform`, with the Phase 4 `exceptionFactory` that flattens class-validator
+  children to dotted paths like `money.amount` with non-empty constraints — AC-24/G9)
+  and `HttpExceptionFilter` are registered as DI providers — `{ provide: APP_PIPE,
+  useValue }`
   and `{ provide: APP_FILTER, useExisting: HttpExceptionFilter }` (with the class also in
   `providers`) — so any app built from `AppModule` (including the integration harness)
   gets the real wiring; `main.ts` no longer registers globals via `useGlobal*`.
@@ -96,30 +104,38 @@ Phases 2–9.
   (4566, `SERVICES: sqs`), `quay.io/keycloak/keycloak:26.8` (`start-dev --import-realm`,
   mounts `./keycloak/realm-export.json`); all three have healthchecks and bind
   `127.0.0.1` only; no app container (app runs on host via Bun).
-- **Tests**: 19 spec files pass (200 tests / 574 expects as of 2026-10-07; current counts
+- **Tests**: 31 spec files pass (353 tests / 1222 expects as of 2026-10-08; current counts
   live in the plan Execution Log) — `tests/unit/config/env.validation.spec.ts`,
   `tests/unit/health/health.service.spec.ts` (services constructed directly with a mocked EM,
-  no DI container), `tests/unit/common/http/exception.filter.spec.ts` (allowlist,
-  statusCode precedence, 5xx logging/credential redaction, `headersSent`),
-  `tests/integration/bootstrap.spec.ts` (global wiring, health, 404 contract); plus
-  Phase 2 `tests/unit/domain/*.spec.ts` (9 files) and Phase 3
+  no DI container), `tests/unit/common/http/exception.filter.spec.ts` (pinned
+  `{statusCode, code, message, ...}` contract, domain-error mapping, 503 contract,
+  unknown/http-errors handling, 5xx logging/credential redaction, `headersSent`),
+  `tests/integration/bootstrap.spec.ts` (global wiring, health, Phase 4 error
+  contract on 404); plus
+  Phase 2 `tests/unit/domain/*.spec.ts` (9 files), Phase 3
   `tests/integration/schema.spec.ts`, `tests/integration/repositories.spec.ts`,
-  `tests/integration/entities/*.spec.ts` (4 files).
+  `tests/integration/entities/*.spec.ts` (4 files), and Phase 4
+  `tests/integration/{http-api,wallets.http,wagering.http,wallets.service,submit-transaction.use-case}.spec.ts`
+  with `tests/unit/modules/`, `tests/unit/common/dto/`, `tests/unit/common/idempotency/`.
 
 ## Planned / Optional Extensions (If Applicable)
 
-*Implemented since this pattern was written (Phase 3, 2026-10-07):* entity classes in
+*Implemented since this pattern was written:* (Phase 3, 2026-10-07) entity classes in
 `src/database/entities/`, the shared options file `src/database/mikro-orm.config.ts`
 (read by both Nest DI and the `mikro-orm` CLI), the migration chain in
 `src/database/migrations/` (001 applied), and the persistence integration suites
 (`schema.spec.ts`, `repositories.spec.ts`, `entities/*.spec.ts`).
 
+Also (Phase 4, 2026-10-08) the **EM/DI scope decision is pinned**: services inject the
+root `EntityManager` as a *transaction factory* (`@Inject(EntityManager)`), then
+construct repositories per transaction inside `em.transactional(...)` —
+`allowGlobalContext` stays `false`, reads are wrapped in short transactions, and
+repositories are never shared singletons (plan Execution Log, 2026-10-08; do not
+"unwire" reads from transactions).
+
 *Not implemented — do not assume they exist:*
 - **Phase 8**: `@Public()` consumed by a global JWT guard; `SQS` probe added to `GET /health/ready`.
 - **Phase 5**: `tests/concurrency/` content for the `test:concurrency` script (directory exists, empty).
-- **EM/DI scope decision**: repositories are constructed per injected `EntityManager`
-  (`allowGlobalContext: false`); whether they become shared singletons is deferred to
-  Phase 4 wiring (plan Execution Log deferred list).
 - `MikroOrmModule.forFeature(...)` is not used — repositories take the injected
   `EntityManager` directly; new entities are registered by adding them to the `entities`
   array in `src/database/mikro-orm.config.ts` (the CLI diffs against that same array).
@@ -224,8 +240,8 @@ Key points:
   `mikro-orm` CLI reads the same file — one source of truth for entities and migrations.
   Add new entities to its `entities` array or the CLI will not diff them.
 - The factory layers the discrete `DATABASE_*` vars over the config defaults; `clientUrl` /
-  `DATABASE_URL` is **not** consumed by the ORM (known env-contract split, deferred to
-  Phase 4 — `docs/infrastructure.md` → Deferred gaps).
+  `DATABASE_URL` is **not** consumed by the ORM (known env-contract split — still open
+  after Phase 4 — `docs/infrastructure.md` → Deferred gaps).
 - `autoLoadEntities` and `discovery: { warnWhenNoEntities: false }` are no longer set:
   entities exist since Phase 3 (they were Phase 1–2 stopgaps — see gotcha G4).
 
@@ -397,9 +413,12 @@ export class BetsService {
 - [ ] `package.json` keeps `"engines": { "bun": ">=1.4.2" }` — the decorator-metadata floor (G1).
 - [ ] Compose ports and the app listener stay loopback by default: compose `127.0.0.1:PORT:PORT`
       bindings + `HOST=127.0.0.1` (opt into `0.0.0.0` explicitly, never via code default).
-- [ ] Error responses use the `ALLOWED_FIELDS` allowlist in `src/common/http/exception.filter.ts`
-      (`message`/`error`/`errorCode`) — extend the list deliberately at T028; never spread
-      `getResponse()` into the client response, and keep `statusCode` from `getStatus()`.
+- [ ] Error responses follow the pinned body contract in `src/common/http/exception.filter.ts`
+      (`{ statusCode, code, message, failureCode?, status?, transactionId?,
+      idempotentReplay?, errors?, correlationId? }` — Phase 4 rewrite, T028): extend the
+      contract deliberately; never spread `getResponse()` into the client response, keep
+      `statusCode` from `getStatus()`, and keep ≥500 messages masked (503 exempt — the
+      pinned operator health hint).
 - [ ] Every change passes `bun run validate` (Bun itself never type-checks) and `bun test`.
 - [ ] Compose changes pass `docker compose config -q` and `docker compose up -d --wait`.
 
@@ -429,7 +448,7 @@ export class BetsService {
 - `docs/solutions/patterns/backend/mikro-orm-v7-raw-sql-locking-and-db-managed-columns.md` —
   raw SQL (`em.execute` + `?`), transaction affinity, DB-managed column stripping, lock tests
   (Phases 2–3 companion to this doc)
-- `docs/plans/20261006111327-full-wagering-processor-plan.md` — Phase 1–3 tasks + Execution Log (evidence format)
+- `docs/plans/20261006111327-full-wagering-processor-plan.md` — Phase 1–4 tasks + Execution Log (evidence format)
 - `docs/infrastructure.md` — migration commands, env-contract split, Deferred gaps
 - `.opencode/skills/nestjs-conventions/SKILL.md`, `.opencode/skills/bullmq/SKILL.md` (Phases 6–7)
 - `.opencode/skills/typeorm/SKILL.md` → migration discipline analogue for `@mikro-orm/migrations`

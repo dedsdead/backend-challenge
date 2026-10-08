@@ -2,14 +2,16 @@
 
 Source of truth for runtime topology, deployment model, and operational constraints.
 Facts reflect the challenge specification (`../README.md`) as realized through
-Phases 1–3 of `plans/20261006111327-full-wagering-processor-plan.md`
-(Foundation & Local Stack, Domain Core & Events, Persistence & Schema — all marked
-✅ Completed; Phase 3 schema applied to the local database 2026-10-07).
-Status: **foundation + persistence implemented** — the repo contains the NestJS 12 /
-Bun application (`src/`, `tests/`), `docker-compose.yml` (PostgreSQL 16, LocalStack
-4.13.1, Keycloak 26.8), validated env config, MikroORM 7.2.4 entities + repositories,
-and migration 001 applied to the local database. No cloud IaC exists and
-cloud/provider topology is still undecided; Phases 4–9 (HTTP API, concurrency, SQS
+Phases 1–4 of `plans/20261006111327-full-wagering-processor-plan.md`
+(Foundation & Local Stack, Domain Core & Events, Persistence & Schema, Use Case &
+HTTP API — all marked ✅ Completed; Phase 3 schema applied to the local database
+2026-10-07).
+Status: **foundation + persistence + HTTP API implemented** — the repo contains the
+NestJS 12 / Bun application (`src/`, `tests/`), `docker-compose.yml` (PostgreSQL 16,
+LocalStack 4.13.1, Keycloak 26.8), validated env config, MikroORM 7.2.4 entities +
+repositories, migration 001 applied to the local database, and the wallet/wagering
+modules `src/modules/` (2026-10-08). No cloud IaC exists and
+cloud/provider topology is still undecided; Phases 5–9 (concurrency, SQS
 ingestion, workers, auth/observability, graded docs) are pending. Record further
 realized decisions in place as implementation lands.
 
@@ -43,7 +45,7 @@ Local containers (observed names, project = directory name): `backend-challenge-
 
 | Service | Role | Notes |
 |---|---|---|
-| NestJS app (Bun 1.4.2, NestJS 12.1.2) | HTTP API + SQS consumer + workers | must be correct with **3+ concurrent instances**; scaffold, domain, and persistence implemented (Phases 1–3), consumers/workers planned (Phases 6–7) |
+| NestJS app (Bun 1.4.2, NestJS 12.1.2) | HTTP API + SQS consumer + workers | must be correct with **3+ concurrent instances**; scaffold, domain, persistence, and the HTTP API implemented (Phases 1–4), consumers/workers planned (Phases 6–7) |
 | PostgreSQL | system of record | wallets, ledger, inbox, outbox, idempotency; local image `postgres:16`, host `127.0.0.1:5432`, `postgres`/`local`, db `wagering`; schema owned by migration 001 (see Deployment and Operations) |
 | MikroORM 7.2.4 | ORM + migrator | entities in `src/database/entities/`, config `src/database/mikro-orm.config.ts`, migrations `src/database/migrations/`; wired into Nest DI via `MikroOrmModule.forRootAsync` in `src/app.module.ts` |
 | Keycloak (local IdP) | OIDC token issuer for the HTTP API | local container: `quay.io/keycloak/keycloak:26.8`, `start-dev --import-realm`, port 8080, realm import from `keycloak/realm-export.json` — currently a **placeholder** realm `wagering` (no clients/roles); realm config + OIDC/JWKS guard still planned (plan T043/T044); not probed by readiness (T047) |
@@ -141,7 +143,8 @@ Local containers (observed names, project = directory name): `backend-challenge-
   `DATABASE_PORT` / `DATABASE_USER` / `DATABASE_PASSWORD` / `DATABASE_NAME` whose
   defaults already match local compose (`localhost`, `5432`, `postgres`, `local`,
   `wagering`). Changing only `DATABASE_URL` therefore does not move the ORM. Contract
-  cleanup is deferred to Phase 4 wiring (see Deferred gaps); do not remove the required
+  cleanup is **still open** — Phase 4 (2026-10-08) closed without consolidating it
+  (see Deferred gaps); do not remove the required
   `DATABASE_URL` unilaterally.
 
 ### Tests and verification
@@ -159,9 +162,12 @@ Local containers (observed names, project = directory name): `backend-challenge-
   `TRUNCATE` (asserted in `tests/integration/schema.spec.ts`,
   `tests/integration/repositories.spec.ts`,
   `tests/integration/entities/wallet-ledger-entry.entity.spec.ts`).
-- **Evidence 2026-10-07** (compose stack healthy): `bun run validate` exit 0;
+- **Evidence 2026-10-07** (Phase 3, compose stack healthy): `bun run validate` exit 0;
   `bun test` 200 pass / 0 fail across 19 files; migration round-trip exit 0
   (commands above).
+- **Evidence 2026-10-08** (Phase 4): `bun run validate` exit 0; `bun test`
+  **353 pass / 0 fail** across 31 files (1222 expects); `docker compose ps` →
+  postgres / localstack / keycloak `Up (healthy)` (plan Execution Log).
 - **Gap**: `bun run test:concurrency` currently exits non-zero — `tests/concurrency/`
   exists but contains no test files (plan Phase 5 will add them).
 
@@ -198,14 +204,15 @@ Local containers (observed names, project = directory name): `backend-challenge-
 - Integration tests hit the real local database — never point them at a shared
   environment.
 
-### Deferred gaps (verified absent — not done yet)
+### Deferred gaps (verified absent — not done yet; item 7 records a Phase 4 decision)
 
 1. **Ledger keyset-pagination index**: `pageByCursor` pages newest-first on
    `(created_at, id)` per wallet (`src/database/repositories/mikro-orm.repositories.ts`),
    but migration 001 only creates `idx_ledger_wallet_id (wallet_id, id)` and
    `idx_ledger_transaction_id (transaction_id)` — no index covers
-   `(wallet_id, created_at, id)` / `(created_at, id)`. Add via a future migration when
-   pagination ships.
+   `(wallet_id, created_at, id)` / `(created_at, id)`. Pagination itself shipped in
+   Phase 4 (`GET /wallets/:walletId/ledger`), so the index is now on a hot path —
+   add it via migration 002 (plan T039).
 2. **`PENDING_REFERENCE` recovery index**: `findPendingReferenceDue` filters
    `status = 'PENDING_REFERENCE'` with `reference_next_attempt_at IS NULL OR <= at`
    ordered by `(reference_next_attempt_at, created_at)`; `wager_transaction` has no
@@ -214,7 +221,8 @@ Local containers (observed names, project = directory name): `backend-challenge-
    themselves already exist (migration 001).
 3. **`DATABASE_URL` vs discrete `DATABASE_*` contract cleanup**: `DATABASE_URL` is
    required by validation but unused by the ORM; discrete vars/defaults do the actual
-   connecting. Consolidate during Phase 4 wiring.
+   connecting. Still open — Phase 4 (2026-10-08) closed without consolidating it;
+   do it in a later phase (do not silently drop the required `DATABASE_URL`).
 4. **SQS queues do not exist**: broker is up, but `wager-transactions.fifo` /
    `wager-transactions-dlq.fifo` are uncreated and `package.json` has no `queue:setup`
    script (plan T034, Phase 6).
@@ -227,9 +235,13 @@ Local containers (observed names, project = directory name): `backend-challenge-
    `wallet_ledger_entry.wallet_id`/`transaction_id` as FK. Whether the omission is a
    deliberate app-level-integrity choice or plan drift is **not verified** — confirm
    before relying on DB-enforced referential integrity.
-7. **EM/DI scope undecided** — repositories are constructed per injected
-   `EntityManager` (`allowGlobalContext: false` in `src/database/mikro-orm.config.ts`);
-   whether they stay per-EM or become shared singletons is deferred to Phase 4 wiring.
+7. **EM/DI scope — decided in Phase 4 (pinned; no longer open — kept here for
+   numbering)**: services inject the root `EntityManager` as a transaction factory
+   (`@Inject(EntityManager)`), repositories are constructed **per transaction**
+   inside `em.transactional(...)` (never shared singletons), `allowGlobalContext`
+   stays `false`, and even reads run inside short transactions. Do not "unwrap"
+   reads from transactions — that would contradict the pinned decision (plan
+   Execution Log, 2026-10-08).
 8. **Unused artifacts** — the `createMikroORM()` export in
    `src/database/mikro-orm.config.ts` and the devDependency `@oxc-node/core` are
    unreferenced; remove or wire up later (plan Execution Log).
