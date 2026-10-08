@@ -18,11 +18,13 @@ export interface WagerTransactionRepository {
   findById(id: string): Promise<WagerTransaction | null>;
   findByIdempotencyKey(idempotencyKey: string): Promise<WagerTransaction | null>;
   findByProviderAndExternal(providerId: string, externalTransactionId: string): Promise<WagerTransaction | null>;
+  findByWalletId(walletId: string, limit?: number): Promise<WagerTransaction[]>;
   /** A PROCESSED reversal of this kind already applied to the reference (per-type single reversal, §7.4). */
   findAppliedReversal(referenceTransactionId: string, kind: WagerTransactionKind): Promise<WagerTransaction | null>;
   findPendingReference(limit?: number): Promise<WagerTransaction[]>;
   /** PENDING_REFERENCE rows whose `referenceNextAttemptAt` is null (never scheduled) or `<= at`, oldest attempt first. */
   findPendingReferenceDue(at: Date, limit?: number): Promise<WagerTransaction[]>;
+  findAll(): Promise<WagerTransaction[]>;
   save(tx: WagerTransaction): Promise<void>;
 }
 
