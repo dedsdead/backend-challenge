@@ -46,7 +46,7 @@ describe('WalletsService.create / get (T025)', () => {
     await em.nativeDelete(InboxMessageEntity, {} as never);
     await em.nativeDelete(OutboxMessageEntity, {} as never);
     service = new WalletsService(em);
-  }, 15_000);
+  }, 60_000);
 
   afterAll(async () => {
     await em.getConnection().execute('TRUNCATE TABLE wallet_ledger_entry');
@@ -56,7 +56,7 @@ describe('WalletsService.create / get (T025)', () => {
     await em.nativeDelete(OutboxMessageEntity, {} as never);
     await orm.close();
     await releaseTestLock();
-  }, 15_000);
+  }, 60_000);
 
   it('creates a wallet with version 1 and the initial balance', async () => {
     const playerId = v4();

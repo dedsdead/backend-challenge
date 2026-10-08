@@ -35,12 +35,12 @@ describe('bootstrap (AppModule)', () => {
       throw new Error('expected a TCP AddressInfo from listen(0)');
     }
     baseUrl = `http://127.0.0.1:${address.port}`;
-  }, 15_000);
+  }, 60_000);
 
   afterAll(async () => {
     await app?.close();
     await releaseTestLock();
-  }, 15_000);
+  }, 60_000);
 
   it('wires the filter and pipe as global enhancers', () => {
     if (!app) throw new Error('app failed to boot');

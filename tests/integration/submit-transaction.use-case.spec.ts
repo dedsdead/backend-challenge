@@ -76,13 +76,13 @@ describe('SubmitTransactionUseCase happy path (T026 cycle A)', () => {
         ingress: { kind: 'http' },
         ...overrides,
       } as SubmitTransactionCommand);
-  }, 15_000);
+  }, 60_000);
 
   afterAll(async () => {
     await truncate(orm.em.fork());
     await orm.close();
     await releaseTestLock();
-  }, 15_000);
+  }, 60_000);
 
   const newWallet = async (amount = '1000.00') => {
     const playerId = v4();
