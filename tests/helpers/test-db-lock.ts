@@ -4,11 +4,12 @@ let lockClient: Client | null = null;
 const TEST_LOCK_ID = 0x77616765; // 'wage' in hex
 
 export async function acquireTestLock(): Promise<void> {
-  if (lockClient) return;
+  // Always create a new connection for the lock to avoid issues with previous connections
   const databaseUrl = process.env.DATABASE_URL ?? 'postgres://postgres:local@localhost:5432/wagering';
-  lockClient = new Client({ connectionString: databaseUrl });
-  await lockClient.connect();
-  await lockClient.query('SELECT pg_advisory_lock($1)', [TEST_LOCK_ID]);
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  await client.query('SELECT pg_advisory_lock($1)', [TEST_LOCK_ID]);
+  lockClient = client;
 }
 
 export async function releaseTestLock(): Promise<void> {

@@ -2,18 +2,21 @@
 
 Source of truth for runtime topology, deployment model, and operational constraints.
 Facts reflect the challenge specification (`../README.md`) as realized through
-Phases 1–4 of `plans/20261006111327-full-wagering-processor-plan.md`
+Phases 1–5 of `plans/20261006111327-full-wagering-processor-plan.md`
 (Foundation & Local Stack, Domain Core & Events, Persistence & Schema, Use Case &
-HTTP API — all marked ✅ Completed; Phase 3 schema applied to the local database
-2026-10-07).
-Status: **foundation + persistence + HTTP API implemented** — the repo contains the
-NestJS 12 / Bun application (`src/`, `tests/`), `docker-compose.yml` (PostgreSQL 16,
-LocalStack 4.13.1, Keycloak 26.8), validated env config, MikroORM 7.2.4 entities +
-repositories, migration 001 applied to the local database, and the wallet/wagering
-modules `src/modules/` (2026-10-08). No cloud IaC exists and
-cloud/provider topology is still undecided; Phases 5–9 (concurrency, SQS
-ingestion, workers, auth/observability, graded docs) are pending. Record further
-realized decisions in place as implementation lands.
+HTTP API, Concurrency Hardening — all marked ✅ Completed; Phase 3 schema applied
+to the local database 2026-10-07; Phase 5 concurrency suite passing 2026-10-08).
+Status: **foundation + persistence + HTTP API + concurrency hardening implemented**
+— the repo contains the NestJS 12 / Bun application (`src/`, `tests/`),
+`docker-compose.yml` (PostgreSQL 16, LocalStack 4.13.1, Keycloak 26.8), validated
+env config, MikroORM 7.2.4 entities + repositories, migration 001 applied to the
+local database, the wallet/wagering modules `src/modules/` (2026-10-08), the
+**concurrency test suite** (`tests/concurrency/` — hot-wallet, duplicate-flood,
+multi-instance tests), and **lock-conflict metrics instrumentation**
+(`src/common/metrics/metrics.ts` + `SubmitTransactionUseCase`). No cloud IaC
+exists and cloud/provider topology is still undecided; Phases 6–9 (SQS ingestion,
+workers, auth/observability, graded docs) are pending. Record further realized
+decisions in place as implementation lands.
 
 ## Infrastructure Overview
 
@@ -168,8 +171,13 @@ Local containers (observed names, project = directory name): `backend-challenge-
 - **Evidence 2026-10-08** (Phase 4): `bun run validate` exit 0; `bun test`
   **353 pass / 0 fail** across 31 files (1222 expects); `docker compose ps` →
   postgres / localstack / keycloak `Up (healthy)` (plan Execution Log).
-- **Gap**: `bun run test:concurrency` currently exits non-zero — `tests/concurrency/`
-  exists but contains no test files (plan Phase 5 will add them).
+- **Evidence 2026-10-08** (Phase 5): `bun run validate` exit 0; `bun test`
+  **357 pass / 0 fail** across 33 files; `bun run test:concurrency` **3 pass / 0 fail**
+  (hot-wallet, duplicate-flood, multi-instance); `docker compose ps` →
+  postgres / localstack / keycloak `Up (healthy)` (plan Execution Log).
+- **Gap resolved**: `bun run test:concurrency` now passes — `tests/concurrency/`
+  contains `hot-wallet.spec.ts`, `duplicate-flood.spec.ts`, `multi-instance.spec.ts`
+  proving correctness under real parallelism (Phase 5).
 
 ### Source-of-truth references
 

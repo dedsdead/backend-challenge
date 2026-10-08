@@ -61,13 +61,15 @@ deploy must tolerate 3+ running instances (rolling, no global downtime assumptio
 | Health | `/health/live`, `/health/ready` | same | same | same |
 | Access | developer machine | team | restricted | restricted, audited |
 
-Current state (Phases 1–4, 2026-10-08): health endpoints behave as tabulated;
+Current state (Phases 1–5, 2026-10-08): health endpoints behave as tabulated;
 persistence (entities, repositories, migration 001 applied to the local database)
 is in place; the wallet/wagering HTTP endpoints serve **without auth** (Phase 4
 runs tokenless by decision C3); structured (pino) logging, `GET /metrics`, and the
 required log fields are **not wired yet** — `pino`/`prom-client` are installed but
-unused (Phase 4 added only the in-memory counter stub
-`src/common/metrics/metrics.ts`), planned in plan T045/T046.
+unused (Phase 5 added the in-memory counter stub
+`src/common/metrics/metrics.ts` with `wageringLockConflictsTotal`,
+`wageringTxTotal{processed,rejected,pendingReference}`,
+`wageringProcessingSeconds`); planned in plan T045/T046.
 Prerequisite: `bun test` needs the local Docker stack — run
 `docker compose up -d --wait` first (`tests/integration/bootstrap.spec.ts` boots the
 app and hits `/health/ready`; the Phase 4 suites
@@ -77,3 +79,6 @@ boot the app or hit the same database; `tests/integration/{schema,repositories}.
 migration 001 must be applied first:
 `bun run mikro-orm migration:up --config src/database/mikro-orm.config.ts`). Treat
 the local database as disposable — those suites insert and delete rows.
+**Concurrency suite**: `bun run test:concurrency` runs the Phase 5 tests
+(`tests/concurrency/*.spec.ts`) against the live stack — 3 tests, 3 instances
+proven correct.

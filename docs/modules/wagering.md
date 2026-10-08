@@ -57,9 +57,16 @@ and exposes read endpoints for transaction status polling.
   **inside each transaction**; `allowGlobalContext: false`. Read endpoints run in short
   transactions too (pinned decision).
 - **No auth today** — Phase 4 runs without tokens; guards are **T044 (Phase 8)**; metrics
-  are the in-process `CounterStub` (**T046 / Phase 8**); the SQS consumer is
-  **T034–T037 / Phase 6**; the pending-reference worker is **T040 / Phase 7**.
+  include the in-process `CounterStub`/`HistogramStub` for **lock conflicts and
+  transaction outcomes** (`src/common/metrics/metrics.ts` — Phase 5, T033) plus the
+  reconciliation divergence counter; Prometheus instruments and `GET /metrics` are
+  **T046 / Phase 8**; the SQS consumer is **T034–T037 / Phase 6**; the pending-reference
+  worker is **T040 / Phase 7**.
 - `Idempotency-Key` header is validated in the controller **before any DB write**.
+- **Lock-conflict instrumentation** (Phase 5, T033): `metrics.wageringLockConflictsTotal`
+  increments when `findByIdForUpdate` wait exceeds 50ms; `metrics.wageringTxTotal`
+  (`processed`, `rejected`, `pendingReference`) and `metrics.wageringProcessingSeconds`
+  are recorded at transaction completion.
 
 ## Responsibilities
 
@@ -369,6 +376,9 @@ wallets by constructing `WalletsService` with an EM directly.
 | `tests/integration/http-api.spec.ts` (8 e2e scenarios) | The full §9 walk over real PG (T029): wallet lifecycle (create `version 1` → duplicate 409 → other currency 201); `BET/WIN/LOSS` balance + direction arithmetic and ledger contents; insufficient funds ⇒ 422 with unchanged balance/ledger; idempotent replay with original balance + 409 conflict (AC-5); refund once / second refund 422 `REFERENCE_ALREADY_REVERSED` / mixed ROLLBACK allowed / second ROLLBACK 422 (AC-8); cross-currency submit ⇒ 422 `CURRENCY_MISMATCH`, no effects, read-back keeps **wallet** currency (CR-2); `OPENING` externally ⇒ 400 (AC-18) and reconciliation consistent (AC-17); `limit=1` ledger walk with no duplicates/skips and newest-first order (AC-21). |
 | `tests/integration/bootstrap.spec.ts` (5) | Global pipe/filter wiring and the generic `404 NOT_FOUND` contract this module's lookups rely on. |
 | `tests/unit/common/http/exception.filter.spec.ts` (38) | The pinned error contract end-to-end: domain→status mapping (`ValidationError→400`, `IdempotencyConflictError→409`, `WalletExistsError→409`, `NotFoundError→404` w/o failureCode, business reject→422 + failureCode), 422 passthrough of `transactionId`/`idempotentReplay`, `Retry-After` + `INFRASTRUCTURE_ERROR` on 503, 500 masking, correlation-id validation, header-safe logging. |
+| `tests/concurrency/hot-wallet.spec.ts` (1) | Hot-wallet contention: seed wallet `100.00`; `Promise.all` two `POST /wagering/transactions` bets of `80.00` (distinct idempotency keys); assert one `PROCESSED`, one `REJECTED INSUFFICIENT_FUNDS`, balance `20.00`, exactly one `DEBIT` row in ledger (AC-11). |
+| `tests/concurrency/duplicate-flood.spec.ts` (1) | 50× duplicate flood: same idempotency key + payload fired 50× in parallel → exactly one stored transaction, one debit, all responses consistent (`idempotentReplay: true` on ≥49) (AC-12). |
+| `tests/concurrency/multi-instance.spec.ts` (1) | Multi-instance: 3 logical app instances (spawned via test helper on ports 3001–3003, same DB/queues); mixed workload across shared + distinct wallets; final invariant check: for every wallet `balance == Σledger` and no duplicate debit per transaction. |
 
 Supporting (shared): `tests/integration/schema.spec.ts` (24) proves the DB constraints
 this module depends on — unique idempotency key, unique provider+external, partial
@@ -382,9 +392,12 @@ non-negative balance CHECK, ledger immutability trigger.
 - **Auth (T044, Phase 8):** no JWT/roles guards; all three endpoints unauthenticated;
   `401`/`403` contract codes are reserved but unreachable. Test suites document this
   ("Phase 4 runs without tokens").
-- **Metrics / observability (T046, Phase 8; T033 lock-conflict counters, Phase 5):** only
-  the in-process `CounterStub` for reconciliation divergence exists; no
-  `wagering_tx_total`, no `GET /metrics`, no pino structured logging (T045).
+- **Metrics / observability (T046, Phase 8):** `wageringLockConflictsTotal`,
+  `wageringTxTotal{processed,rejected,pendingReference}`, and
+  `wageringProcessingSeconds` are implemented as in-process `CounterStub`/`HistogramStub`
+  in `src/common/metrics/metrics.ts` (Phase 5, T033) and instrumented in
+  `SubmitTransactionUseCase`; Prometheus instruments and `GET /metrics` arrive with
+  T046; no pino structured logging yet (T045).
 - **SQS consumer (T034–T037, Phase 6):** the use case supports `ingress.kind: 'sqs'`
   with inbox dedup (tested at unit level), but no consumer, no queue bootstrap script, no
   DLQ handling, no ack-after-commit/SIGTERM lifecycle.
@@ -392,9 +405,11 @@ non-negative balance CHECK, ledger immutability trigger.
   today; pending-reference worker (T040) — `PENDING_REFERENCE` rows written by this
   module are **never resolved or exhausted** until it lands (`reference_attempts`/
   `reference_next_attempt_at` columns exist from migration 001 but are unused here).
-- **Concurrency suites (T030–T032, Phase 5):** hot-wallet, 50× duplicate flood, and
-  3-instance tests are not written yet — the `FOR UPDATE` + unique-constraint guarantees
-  above are asserted sequentially/with fault injection, not under real parallelism.
+- **Concurrency suites (T030–T032, Phase 5):** **completed** — hot-wallet
+  (`tests/concurrency/hot-wallet.spec.ts`), 50× duplicate-flood
+  (`tests/concurrency/duplicate-flood.spec.ts`), and 3-instance
+  (`tests/concurrency/multi-instance.spec.ts`) tests exist and pass; the `FOR UPDATE` +
+  unique-constraint guarantees are proven under real parallelism.
 - **Idempotency-key scoping migration `(provider_id, key)` (deferred; revisit with T039
   review / Phase 8):** today `uq_wager_tx_idempotency_key` is global, so one provider
   could squat another's key; requires tokens that bind `providerId` first.

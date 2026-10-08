@@ -28,9 +28,13 @@ import {
 import { isUniqueViolation } from '../../database/repositories/unique-violation';
 import { payloadHash } from '../../common/idempotency/payload-hash';
 import { WagerTransactionProcessed } from '../../events/wager-transaction-processed.event';
+import { metrics } from '../../common/metrics/metrics';
 import { WagerTransactionRejected } from '../../events/wager-transaction-rejected.event';
 import { WagerTransactionPendingReference } from '../../events/wager-transaction-pending-reference.event';
 import { WalletBalanceChanged } from '../../events/wallet-balance-changed.event';
+
+/** Lock-conflict threshold from glossary: "Lock conflict | A `findByIdForUpdate` wait exceeding 50ms" */
+const LOCK_CONFLICT_THRESHOLD_MS = 50;
 
 export type SubmitIngress =
   | { kind: 'http' }
@@ -162,6 +166,7 @@ export class SubmitTransactionUseCase {
 
   private async runInTx(cmd: SubmitTransactionCommand): Promise<SubmitTransactionResult> {
     const hash = this.businessHash(cmd);
+    const txStart = Date.now();
     return this.em.transactional(async (tx) => {
       const wallets = new MikroOrmWalletRepository(tx);
       const transactions = new MikroOrmWagerTransactionRepository(tx);
@@ -196,7 +201,7 @@ export class SubmitTransactionUseCase {
               `Idempotency key ${cmd.idempotencyKey} was used with a different payload`,
             );
           }
-          return this.replay(storedForDelivery);
+          return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), this.replay(storedForDelivery);
         }
         await inbox.save(
           InboxMessage.receive({
@@ -217,7 +222,7 @@ export class SubmitTransactionUseCase {
             `Idempotency key ${cmd.idempotencyKey} was used with a different payload`,
           );
         }
-        return this.replay(existing);
+        return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), this.replay(existing);
       }
 
       // (providerId, externalTransactionId) is unique: the same external id
@@ -253,7 +258,22 @@ export class SubmitTransactionUseCase {
       });
 
       // wallet row lock — serializes concurrent submissions per wallet
+      const lockStart = Date.now();
       const wallet = await wallets.findByIdForUpdate(cmd.walletId);
+      const lockWaitMs = Date.now() - lockStart;
+      if (lockWaitMs > LOCK_CONFLICT_THRESHOLD_MS) {
+        metrics.wageringLockConflictsTotal.inc();
+      }
+
+      const recordTxMetric = (status: WagerTransactionStatus): void => {
+        if (status === WagerTransactionStatus.Processed) {
+          metrics.wageringTxTotal.processed.inc();
+        } else if (status === WagerTransactionStatus.Rejected) {
+          metrics.wageringTxTotal.rejected.inc();
+        } else if (status === WagerTransactionStatus.PendingReference) {
+          metrics.wageringTxTotal.pendingReference.inc();
+        }
+      };
 
       const reject = async (
         failureCode: FailureCode,
@@ -282,23 +302,24 @@ export class SubmitTransactionUseCase {
             occurredAt: rejected.occurredAt,
           }),
         );
-        return {
-          transactionId: wagerTx.id,
-          status: wagerTx.status,
-          balance: observedBalance?.toJSON(),
-          idempotentReplay: false,
-          failureCode,
-        };
+recordTxMetric(wagerTx.status);
+    return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), {
+        transactionId: wagerTx.id,
+        status: wagerTx.status,
+        balance: observedBalance?.toJSON(),
+        idempotentReplay: false,
+        failureCode,
       };
+    };
 
       if (!wallet) {
-        return reject(FailureCode.WalletNotFound, undefined);
+        return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), reject(FailureCode.WalletNotFound, undefined);
       }
       if (wallet.playerId !== cmd.playerId) {
-        return reject(FailureCode.WalletNotFound, undefined);
+        return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), reject(FailureCode.WalletNotFound, undefined);
       }
       if (wallet.balance.currency !== money.currency) {
-        return reject(FailureCode.CurrencyMismatch, wallet.balance);
+        return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), reject(FailureCode.CurrencyMismatch, wallet.balance);
       }
 
       // reference resolution for REFUND/ROLLBACK (§7.4)
@@ -339,13 +360,14 @@ export class SubmitTransactionUseCase {
               occurredAt: pendingEvent.occurredAt,
             }),
           );
-          return {
+          return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), {
             transactionId: wagerTx.id,
             status: wagerTx.status,
             balance: wallet.balance.toJSON(),
             idempotentReplay: false,
           };
         }
+        recordTxMetric(wagerTx.status);
         if (
           reference.providerId !== cmd.providerId ||
           reference.playerId !== cmd.playerId ||
@@ -353,10 +375,10 @@ export class SubmitTransactionUseCase {
           reference.money.currency !== money.currency ||
           reference.roundId !== cmd.roundId
         ) {
-          return reject(FailureCode.ReferenceMismatch, wallet.balance);
+          return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), reject(FailureCode.ReferenceMismatch, wallet.balance);
         }
         if (reference.status !== WagerTransactionStatus.Processed) {
-          return reject(FailureCode.ReferenceNotProcessed, wallet.balance);
+          return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), reject(FailureCode.ReferenceNotProcessed, wallet.balance);
         }
         const allowedReferenceKinds: WagerTransactionKind[] =
           wagerTx.kind === WagerTransactionKind.Refund
@@ -367,17 +389,17 @@ export class SubmitTransactionUseCase {
                 WagerTransactionKind.Refund,
               ];
         if (!allowedReferenceKinds.includes(reference.kind)) {
-          return reject(FailureCode.ReferenceInvalidKind, wallet.balance);
+          return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), reject(FailureCode.ReferenceInvalidKind, wallet.balance);
         }
         if (!reference.money.equals(money)) {
-          return reject(FailureCode.ReferenceAmountMismatch, wallet.balance);
+          return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), reject(FailureCode.ReferenceAmountMismatch, wallet.balance);
         }
         const appliedReversal = await transactions.findAppliedReversal(
           reference.id,
           wagerTx.kind,
         );
         if (appliedReversal) {
-          return reject(FailureCode.ReferenceAlreadyReversed, wallet.balance);
+          return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), reject(FailureCode.ReferenceAlreadyReversed, wallet.balance);
         }
       }
 
@@ -393,7 +415,7 @@ export class SubmitTransactionUseCase {
               : wallet.debit(money, now);
         } catch (error) {
           if (error instanceof InsufficientFundsError) {
-            return reject(
+            return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), reject(
               wagerTx.requiresReference()
                 ? FailureCode.ReversalExceedsBalance
                 : FailureCode.InsufficientFunds,
@@ -471,7 +493,8 @@ export class SubmitTransactionUseCase {
         );
       }
 
-      return {
+      recordTxMetric(wagerTx.status);
+      return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), {
         transactionId: wagerTx.id,
         status: wagerTx.status,
         balance: observedBalance.toJSON(),

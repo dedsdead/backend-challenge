@@ -60,6 +60,11 @@ against the same wallet row.
   (prom-client instrument arrives with **T046 / Phase 8**).
 - Zero-initial-balance wallets create **only** the wallet row (no `OPENING`, no ledger
   entry, no outbox event).
+- **Lock-conflict and transaction metrics** (`wageringLockConflictsTotal`,
+  `wageringTxTotal{processed,rejected,pendingReference}`, `wageringProcessingSeconds`)
+  are defined in `src/common/metrics/metrics.ts` and instrumented in
+  `SubmitTransactionUseCase` (Phase 5, T033); the wallets module does not directly
+  increment these but they cover wallet-level contention.
 
 ## Responsibilities
 
@@ -301,14 +306,18 @@ repositories under `src/database/repositories/`.
 - **Auth / roles (T044, Phase 8):** no JWT guard, no `@Roles` — all four endpoints are
   unauthenticated. `401 UNAUTHORIZED` / `403 ROLE_FORBIDDEN` exist only in the pinned
   contract and the filter mapping, not in any live path.
-- **Metrics (T046, Phase 8; T033, Phase 5):** `metrics.reconciliationDivergence` is an
+- **Metrics (T046, Phase 8):** `metrics.reconciliationDivergence` is an
   in-process `CounterStub` (`src/common/metrics/metrics.ts`), not a Prometheus counter;
-  there is no `GET /metrics` yet.
+  there is no `GET /metrics` yet. **Lock-conflict and transaction metrics**
+  (`wageringLockConflictsTotal`, `wageringTxTotal{processed,rejected,pendingReference}`,
+  `wageringProcessingSeconds`) are implemented as `CounterStub`/`HistogramStub` in
+  `src/common/metrics/metrics.ts` (Phase 5, T033) and instrumented in
+  `SubmitTransactionUseCase`; Prometheus instruments arrive with T046.
 - **Structured logging / correlation propagation (T045, Phase 8):** `ReconciliationService`
   uses the plain Nest `Logger`; no pino bindings or redaction yet.
-- **Concurrency suites (T030–T033, Phase 5):** hot-wallet / duplicate-flood /
-  multi-instance tests do not exist; nothing in this module is proven under real
-  parallelism yet.
+- **Concurrency suites (T030–T033, Phase 5):** **completed** — hot-wallet, duplicate-flood,
+  and multi-instance tests exist in `tests/concurrency/` and pass; lock-conflict
+  instrumentation is in place.
 - **Performance follow-ups (candidate review with T039 / Phase 7):** per-`save()`
   `findOne + flush` round trips; `pageByCursor` `$or` predicate could become a row-value
   predicate.

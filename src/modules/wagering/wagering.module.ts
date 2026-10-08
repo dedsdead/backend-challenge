@@ -6,5 +6,6 @@ import { WageringController } from './wagering.controller';
 @Module({
   controllers: [WageringController],
   providers: [SubmitTransactionUseCase, WageringService],
+  exports: [SubmitTransactionUseCase],
 })
 export class WageringModule {}

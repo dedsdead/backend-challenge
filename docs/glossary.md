@@ -23,6 +23,8 @@ specification (`../README.md`) and [architecture.md](architecture.md).
 | `code` | Stable HTTP error-class identifier in API response bodies (e.g. `UNAUTHORIZED`, `ROLE_FORBIDDEN`, `VALIDATION_ERROR`) — distinct from `failureCode`, which is domain-level. | plan §4 |
 | `transact:write` / `transact:read` | Keycloak roles: write required for POST endpoints, read for GET. | plan T043/T044 |
 | Idempotency conflict | Same `Idempotency-Key` with a different `payloadHash` — distinct from a replay. | spec §9 |
+| Lock conflict | A `findByIdForUpdate` wait exceeding 50ms, indicating contention on the wallet row; counted by `wageringLockConflictsTotal` metric (Phase 5, T033). | plan T033 |
+| Transaction metric | Per-status counters (`processed`, `rejected`, `pendingReference`) and processing latency histogram (`wageringProcessingSeconds`) recorded at transaction completion (Phase 5, T033). | plan T033 |
 
 ## Technical Terms and Acronyms
 
@@ -33,7 +35,7 @@ specification (`../README.md`) and [architecture.md](architecture.md).
 | At-least-once | Delivery guarantee assumed everywhere: duplicates are normal, effects must be idempotent. |
 | Lost update | Concurrent writes silently overwriting each other; prevented by the chosen concurrency strategy per `walletId`. |
 | Optimistic locking | Conflict detection via `version` increment with bounded retry. |
-| Pessimistic locking | Row-level lock held for the duration of the balance change. Implemented as `WalletRepository.findByIdForUpdate` (`LockMode.PESSIMISTIC_WRITE` in `src/database/repositories/mikro-orm.repositories.ts`); called inside `em.transactional(...)` by `SubmitTransactionUseCase` (step 3) since Phase 4 — under the pinned EM/DI decision every wallet read is also wrapped in a short transaction (root `EntityManager` as transaction factory, per-tx repositories, `allowGlobalContext: false`). The Phase 5 concurrency suite (T030–T033) that proves contention behavior is still unwritten. |
+| Pessimistic locking | Row-level lock held for the duration of the balance change. Implemented as `WalletRepository.findByIdForUpdate` (`LockMode.PESSIMISTIC_WRITE` in `src/database/repositories/mikro-orm.repositories.ts`); called inside `em.transactional(...)` by `SubmitTransactionUseCase` (step 5) since Phase 4 — under the pinned EM/DI decision every wallet read is also wrapped in a short transaction (root `EntityManager` as transaction factory, per-tx repositories, `allowGlobalContext: false`). The Phase 5 concurrency suite (T030–T033) proves contention behavior: hot-wallet (two concurrent bets on one wallet), duplicate-flood (50× same key), and multi-instance (3 logical instances, mixed workload) all pass. |
 | Keyset cursor (`LedgerCursor` / `LedgerPage`) | Newest-first pagination on `(created_at, id)` via `WalletLedgerEntryRepository.pageByCursor` — parameterized, no `OFFSET`; `nextCursor` is `null` on the last page. |
 | DLQ | Dead-letter queue (`wager-transactions-dlq.fifo`) for messages exceeding the attempt limit. |
 | FIFO queue | SQS queue with ordering/dedup by `MessageGroupId` — an optimization only, never the consistency guarantee. |
@@ -43,6 +45,8 @@ specification (`../README.md`) and [architecture.md](architecture.md).
 | ADR | Architecture Decision Record, stored in [decisions/](decisions/). |
 | Canonical JSON | Key-sorted JSON used to compute `payloadHash`; transport metadata excluded. |
 | ISO-4217 | Currency code standard used by `Money.currency` (e.g. `BRL`). |
+| Lock-conflict metric | `wageringLockConflictsTotal` counter incremented when `findByIdForUpdate` wait exceeds 50ms (Phase 5, T033). |
+| Transaction metrics | `wageringTxTotal{processed,rejected,pendingReference}` counters and `wageringProcessingSeconds` histogram recorded at transaction completion (Phase 5, T033). |
 
 ## Naming Conventions
 

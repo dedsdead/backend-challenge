@@ -144,6 +144,24 @@ export class MikroOrmWagerTransactionRepository implements WagerTransactionRepos
     return rows.map((r) => wagerTransactionFromEntity(r as unknown as WagerTransactionRow));
   }
 
+  async findByWalletId(walletId: string, limit = 1000): Promise<WagerTransaction[]> {
+    const rows = await this.em.find(
+      WagerTransactionEntity,
+      { walletId } as FilterQuery<any>,
+      { orderBy: { createdAt: 'DESC' }, limit } as any,
+    );
+    return rows.map((r) => wagerTransactionFromEntity(r as unknown as WagerTransactionRow));
+  }
+
+  async findAll(): Promise<WagerTransaction[]> {
+    const rows = await this.em.find(
+      WagerTransactionEntity,
+      {} as FilterQuery<any>,
+      { orderBy: { createdAt: 'DESC' } } as any,
+    );
+    return rows.map((r) => wagerTransactionFromEntity(r as unknown as WagerTransactionRow));
+  }
+
   async save(tx: WagerTransaction): Promise<void> {
     const data = wagerTransactionToEntity(tx);
     const existing = await this.em.findOne(WagerTransactionEntity, { id: tx.id } as FilterQuery<any>);
