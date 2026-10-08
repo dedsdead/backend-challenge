@@ -4,6 +4,7 @@ import { WagerTransaction } from '../../domain/wager-transaction/wager-transacti
 import { WalletLedgerEntry } from '../../domain/ledger/wallet-ledger-entry';
 import { InboxMessage } from '../../domain/inbox/inbox-message';
 import { OutboxMessage } from '../../domain/outbox/outbox-message';
+import { WagerTransactionKind } from '../../domain/enums';
 
 export interface WalletRepository {
   findById(id: string): Promise<Wallet | null>;
@@ -17,6 +18,8 @@ export interface WagerTransactionRepository {
   findById(id: string): Promise<WagerTransaction | null>;
   findByIdempotencyKey(idempotencyKey: string): Promise<WagerTransaction | null>;
   findByProviderAndExternal(providerId: string, externalTransactionId: string): Promise<WagerTransaction | null>;
+  /** A PROCESSED reversal of this kind already applied to the reference (per-type single reversal, §7.4). */
+  findAppliedReversal(referenceTransactionId: string, kind: WagerTransactionKind): Promise<WagerTransaction | null>;
   findPendingReference(limit?: number): Promise<WagerTransaction[]>;
   /** PENDING_REFERENCE rows whose `referenceNextAttemptAt` is null (never scheduled) or `<= at`, oldest attempt first. */
   findPendingReferenceDue(at: Date, limit?: number): Promise<WagerTransaction[]>;
@@ -41,7 +44,9 @@ export interface WalletLedgerEntryRepository {
   /** Newest-first keyset page on `(created_at, id)` descending; parameterized, no OFFSET. */
   pageByCursor(walletId: string, cursor?: LedgerCursor | null, limit?: number): Promise<LedgerPage>;
   /** Reconstructs the wallet balance from the ledger as a decimal string (`CREDIT` minus `DEBIT`). */
-  sumByWallet(walletId: string): Promise<string>;
+  sumByWallet(walletId: string, currency: string): Promise<string>;
+  /** Number of ledger rows for the wallet (reconciliation `checkedEntries`). */
+  countByWallet(walletId: string): Promise<number>;
   save(entry: WalletLedgerEntry): Promise<void>;
 }
 

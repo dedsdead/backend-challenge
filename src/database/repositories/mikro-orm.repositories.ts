@@ -37,6 +37,7 @@ import {
   LedgerCursor,
   LedgerPage,
 } from './interfaces';
+import { WagerTransactionKind } from '../../domain/enums';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -110,6 +111,15 @@ export class MikroOrmWagerTransactionRepository implements WagerTransactionRepos
 
   async findByProviderAndExternal(providerId: string, externalTransactionId: string): Promise<WagerTransaction | null> {
     const row = await this.em.findOne(WagerTransactionEntity, { providerId, externalTransactionId } as FilterQuery<any>);
+    return row ? wagerTransactionFromEntity(row as unknown as WagerTransactionRow) : null;
+  }
+
+  async findAppliedReversal(referenceTransactionId: string, kind: WagerTransactionKind): Promise<WagerTransaction | null> {
+    const row = await this.em.findOne(WagerTransactionEntity, {
+      referenceTransactionId,
+      kind,
+      status: 'PROCESSED',
+    } as FilterQuery<any>);
     return row ? wagerTransactionFromEntity(row as unknown as WagerTransactionRow) : null;
   }
 
@@ -202,16 +212,25 @@ export class MikroOrmWalletLedgerEntryRepository implements WalletLedgerEntryRep
     };
   }
 
-  async sumByWallet(walletId: string): Promise<string> {
+  async sumByWallet(walletId: string, currency: string): Promise<string> {
     assertUuid(walletId, 'walletId');
     const rows = (await (this.em as unknown as SqlEntityManager).execute(
       `SELECT COALESCE(SUM(CASE WHEN direction = 'CREDIT' THEN money_amount ELSE -money_amount END), 0)::numeric(20, 2) AS total
          FROM wallet_ledger_entry
-        WHERE wallet_id = ?`,
-      [walletId],
+        WHERE wallet_id = ? AND money_currency = ?`,
+      [walletId, currency],
     )) as { total: string | number | null }[];
     const total = rows[0]?.total;
     return total == null ? '0.00' : String(total);
+  }
+
+  async countByWallet(walletId: string): Promise<number> {
+    assertUuid(walletId, 'walletId');
+    const rows = (await (this.em as unknown as SqlEntityManager).execute(
+      `SELECT COUNT(*)::int AS total FROM wallet_ledger_entry WHERE wallet_id = ?`,
+      [walletId],
+    )) as { total: number }[];
+    return rows[0]?.total ?? 0;
   }
 
   async save(entry: WalletLedgerEntry): Promise<void> {

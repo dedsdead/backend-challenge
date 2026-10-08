@@ -19,6 +19,7 @@ export const WalletLedgerEntryEntity = defineEntity({
   indexes: [
     { properties: ['walletId', 'id'], name: 'idx_ledger_wallet_id' },
     { properties: ['transactionId'], name: 'idx_ledger_transaction_id' },
+    { properties: ['walletId', 'createdAt', 'id'], name: 'idx_ledger_wallet_created_id' },
   ],
   checks: [
     {

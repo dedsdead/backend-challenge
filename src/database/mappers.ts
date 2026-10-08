@@ -148,6 +148,7 @@ export function wagerTransactionFromEntity(row: WagerTransactionRow): WagerTrans
     processedAt: row.processedAt ?? undefined,
     createdAt: row.createdAt,
     resultBalance: row.resultBalanceAmount ?? undefined,
+    resultBalanceCurrency: row.resultBalanceCurrency ?? undefined,
   });
 }
 
