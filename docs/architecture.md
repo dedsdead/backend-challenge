@@ -3,18 +3,21 @@
 Source of truth for system architecture, technology choices, and safe-change guidance.
 The challenge specification is `../README.md`; decisions are recorded here (and in
 [decisions/](decisions/) as ADRs when created). Status: **foundation, domain,
-persistence, and HTTP API implemented** (Phases 1–4, 2026-10-06/08) — the
-NestJS/Bun scaffold (`src/`), local Docker stack (`docker-compose.yml`), env
-validation (`src/config/env.validation.ts` + `.env.example`), health endpoints
-(`src/health/`), the domain model (`src/domain/` + integration events in
-`src/events/`), the persistence layer (`src/database/` — 5 entities, mappers,
-repository ports/implementations, migration 001 applied to the local database
-2026-10-07), and the use-case/HTTP layer (`src/modules/wallets/`,
-`src/modules/wagering/` — atomic submit use case, spec §9 endpoints, pinned error
-contract in `src/common/http/exception.filter.ts`) exist and pass tests (353 pass
-/ 0 fail across 31 files, 2026-10-08); SQS ingress/egress, the outbox publisher,
-the concurrency test suite, and JWT auth are still planned (execution plan +
-clarifications).
+persistence, HTTP API, and concurrency hardening implemented** (Phases 1–5,
+2026-10-06/08) — the NestJS/Bun scaffold (`src/`), local Docker stack
+(`docker-compose.yml`), env validation (`src/config/env.validation.ts` +
+`.env.example`), health endpoints (`src/health/`), the domain model
+(`src/domain/` + integration events in `src/events/`), the persistence layer
+(`src/database/` — 5 entities, mappers, repository ports/implementations,
+migration 001 applied to the local database 2026-10-07), the use-case/HTTP layer
+(`src/modules/wallets/`, `src/modules/wagering/` — atomic submit use case, spec §9
+endpoints, pinned error contract in `src/common/http/exception.filter.ts`), and
+the **concurrency test suite** (`tests/concurrency/` — hot-wallet, duplicate-flood,
+multi-instance tests proving correctness under real parallelism) exist and pass
+tests (357 pass / 0 fail across 33 files, 2026-10-08); **lock-conflict
+instrumentation** (`src/common/metrics/metrics.ts` + `SubmitTransactionUseCase`)
+is in place; SQS ingress/egress, the outbox publisher, and JWT auth are still
+planned (execution plan + clarifications).
 
 **Graded deliverable note:** the challenge grades a root-level `ARCHITECTURE.md`
 (spec §14 documentation points; §2 and §4 also reference it by name). This file is the
@@ -70,7 +73,7 @@ Decisions (source: execution plan + clarifications):
 | Authentication | external IdP (e.g. Keycloak, Zitadel) or documented no-op extension point | ✅ **Keycloak** (OIDC JWT via JWKS; health + `/metrics` open) |
 | Root `ARCHITECTURE.md` | graded artifact required by spec §14 vs. this file as canonical — sync strategy | ✅ **Root summary** (see Graded deliverable note above); sync at plan T053/T054 |
 
-Legend: ✅ = decided 2026-10-06. Implementation state of these rows after Phase 4
+Legend: ✅ = decided 2026-10-06. Implementation state of these rows after Phase 5
 (2026-10-08): **MikroORM** — wired in `src/app.module.ts`, with 5 entities, mappers,
 and repository ports/implementations in `src/database/`; migration 001 applied;
 `LockMode.PESSIMISTIC_WRITE` used in `WalletRepository.findByIdForUpdate`, called
@@ -79,8 +82,9 @@ inside `em.transactional()` by `SubmitTransactionUseCase`
 decision every wallet read also runs in a short transaction (root `EntityManager`
 as transaction factory, per-tx repositories — see
 [infrastructure.md](infrastructure.md) → Deferred gaps); **pessimistic row lock** —
-used by the Phase 4 submit path (Phase 5 concurrency suite still unwritten);
-**Keycloak** — local container with placeholder realm
+used by the Phase 4 submit path and **proven under real parallelism by the Phase 5
+concurrency suite** (`tests/concurrency/` — hot-wallet, duplicate-flood,
+multi-instance tests all pass); **Keycloak** — local container with placeholder realm
 `keycloak/realm-export.json` only, no JWT/JWKS guard yet (Phase 4 endpoints run
 unauthenticated); **root `ARCHITECTURE.md`** — not yet created. Flip these
 annotations to "implemented" at plan T054.

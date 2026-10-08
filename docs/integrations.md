@@ -2,14 +2,17 @@
 
 Source of truth for every internal and external integration: contracts, auth model,
 ownership, and failure handling. Status: **foundation + domain + persistence +
-HTTP API (Phases 1–4, 2026-10-06/08)** — the local stack, unauthenticated health
-endpoints, domain model, integration events (`src/events/`), inbox/outbox
-persistence (`src/database/` — `inbox_message`/`outbox_message` tables,
-repositories, migration 001), and the provider HTTP routes
-(`src/modules/wallets/`, `src/modules/wagering/` — live but **without any auth
-guard** until plan T044) exist; no SQS producer/consumer, outbox publisher, or
-JWT auth code yet. Contracts below are prescribed by `../README.md` except where a
-row states otherwise.
+HTTP API + concurrency hardening (Phases 1–5, 2026-10-06/08)** — the local stack,
+unauthenticated health endpoints, domain model, integration events
+(`src/events/`), inbox/outbox persistence (`src/database/` —
+`inbox_message`/`outbox_message` tables, repositories, migration 001), the
+provider HTTP routes (`src/modules/wallets/`, `src/modules/wagering/` — live but
+**without any auth guard** until plan T044), the **concurrency test suite**
+(`tests/concurrency/` — hot-wallet, duplicate-flood, multi-instance tests proving
+correctness under real parallelism), and **lock-conflict instrumentation**
+(`src/common/metrics/metrics.ts` + `SubmitTransactionUseCase`) exist; no SQS
+producer/consumer, outbox publisher, or JWT auth code yet. Contracts below are
+prescribed by `../README.md` except where a row states otherwise.
 
 ## Integration Catalog
 
