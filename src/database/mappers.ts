@@ -223,9 +223,9 @@ export function outboxMessageFromEntity(row: OutboxMessageRow): OutboxMessage {
     aggregateId: row.aggregateId,
     eventType: row.eventType,
     payload: row.payload,
-    occurredAt: row.occurredAt,
+    occurredAt: row.occurredAt instanceof Date ? row.occurredAt : new Date(row.occurredAt),
     attempts: row.attempts,
-    nextAttemptAt: row.nextAttemptAt ?? undefined,
-    publishedAt: row.publishedAt ?? undefined,
+    nextAttemptAt: row.nextAttemptAt ? (row.nextAttemptAt instanceof Date ? row.nextAttemptAt : new Date(row.nextAttemptAt)) : undefined,
+    publishedAt: row.publishedAt ? (row.publishedAt instanceof Date ? row.publishedAt : new Date(row.publishedAt)) : undefined,
   });
 }

@@ -90,6 +90,8 @@ describe('WagerTransaction', () => {
         failureCode: undefined,
         processedAt: new Date('2024-01-01T10:00:00Z'),
         createdAt: new Date('2024-01-01T10:00:00Z'),
+        referenceAttempts: 0,
+        referenceNextAttemptAt: undefined,
       });
 
       expect(tx.id).toBe('tx-1');

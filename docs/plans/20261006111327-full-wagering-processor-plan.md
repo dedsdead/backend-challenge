@@ -264,7 +264,7 @@ create `OPENING`.
 | 4 | Use Case & HTTP API | Phase 3 | ✅ Completed |
 | 5 | Concurrency Hardening | Phase 4 | ✅ Completed |
 | 6 | SQS Ingestion | Phase 4 | ⬜ Pending |
-| 7 | Outbox & Reference Workers | Phase 6 | ⬜ Pending |
+| 7 | Outbox & Reference Workers | Phase 6 | 🟡 In Progress |
 | 8 | Auth & Observability | Phase 4 | ⬜ Pending |
 | 9 | Resilience Suite & Graded Docs | Phases 5–8 | ⬜ Pending |
 
@@ -703,14 +703,14 @@ error classification, DLQ, graceful shutdown.
 
 ### Phase 7: Outbox & Reference Workers
 
-**Status**: ⬜ Pending
+**Status**: 🟡 In Progress
 **Objective**: Post-commit publishing safe with concurrent publishers, and
 out-of-order references resolved with bounded retries.
 **Dependencies**: Phase 6
 
 **Tasks**:
 
-- [ ] T038 [US7] Create `src/workers/outbox-publisher.worker.ts`
+- [x] T038 [US7] Create `src/workers/outbox-publisher.worker.ts`
   - interval loop (500ms, jitter): inside `em.transactional` claim batch via
     `em.execute('SELECT id FROM outbox_message WHERE published_at IS NULL AND
     (next_attempt_at IS NULL OR next_attempt_at <= now()) ORDER BY id LIMIT 50
@@ -720,14 +720,14 @@ out-of-order references resolved with bounded retries.
     nextAttemptAt = now + min(2^attempts * 1s, 5min))`
   - crash-window semantics: publish-then-mark means crash → re-publish → consumers
     tolerate duplicates (at-least-once, §11)
-- [ ] T039 [US7] **Generate migration 002 → drift-check → run locally IMMEDIATELY (atomic chain — ORM migration discipline)**
+- [x] T039 [US7] **Generate migration 002 → drift-check → run locally IMMEDIATELY (atomic chain — ORM migration discipline)**
   - NOTE: `reference_attempts` / `reference_next_attempt_at` are already created in
     migration 001 (T020); migration 002 exists only if the reprocessor needs any
     further schema delta discovered while implementing T040 — if none is needed,
     record "no schema delta" here and skip creating an empty migration
   - if created: reversible `down()`, run via `bun run mikro-orm migration:up`
     immediately, then `migration:check` passes
-- [ ] T040 [US7] Create `src/workers/pending-reference.worker.ts`
+- [x] T040 [US7] Create `src/workers/pending-reference.worker.ts`
   - query `PENDING_REFERENCE` due rows (`reference_next_attempt_at <= now()`); per
     row in a transaction re-run reference resolution: resolvable → apply
     balance/ledger, `markProcessed`, set `result_balance` snapshot, enqueue
@@ -751,6 +751,41 @@ out-of-order references resolved with bounded retries.
 1. TypeScript Validation — `bun run validate`.
 2. Tests — `bun run test:integration` (workers suite) green.
 3. Update this plan — mark Phase 7 `✅ Completed`.
+
+---
+
+### Phase 7: Outbox & Reference Workers
+
+**Status**: 🟡 In Progress
+**Objective**: Post-commit publishing safe with concurrent publishers, and
+out-of-order references resolved with bounded retries.
+**Dependencies**: Phase 6
+
+**Tasks**:
+
+- [x] T038 [US7] Create `src/workers/outbox-publisher.worker.ts`
+  - interval loop (500ms, jitter): inside `em.transactional` claim batch via
+    `em.execute('SELECT id FROM outbox_message WHERE published_at IS NULL AND
+    (next_attempt_at IS NULL OR next_attempt_at <= now()) ORDER BY id LIMIT 50
+    FOR UPDATE SKIP LOCKED')`
+  - publish each to `wager-transactions.fifo` (`sendMessageBatch`), then in the same
+    tx `markPublished`; on publish failure `scheduleRetry(attempts++,
+    nextAttemptAt = now + min(2^attempts * 1s, 5min))`
+  - crash-window semantics: publish-then-mark means crash → re-publish → consumers
+    tolerate duplicates (at-least-once, §11)
+
+**Execution Log — 2026-10-08 (T038 completed)**
+
+| Task | Status | Notes |
+|------|--------|-------|
+| T038 | ✅ Completed | OutboxPublisherWorker implemented with 500ms poll interval (100ms jitter), claims up to 50 pending messages via `claimDueBatch` (FOR UPDATE SKIP LOCKED), publishes batch to `wager-transactions.fifo` SQS queue using `SendMessageBatchCommand`, marks messages published in same transaction. Includes exponential backoff retry (min(2^attempts * 1s, 5min)). Integration test verifies 2 pending messages are published and marked with `publishedAt`. |
+
+**Execution Log — 2026-10-08 (T039, T040 completed)**
+
+| Task | Status | Notes |
+|------|--------|-------|
+| T039 | ✅ Completed | No schema delta required — `reference_attempts` and `reference_next_attempt_at` columns already exist in migration 001. Required indexes (`idx_wager_tx_status_ref_next_attempt` on `(status, referenceNextAttemptAt)`, `idx_ledger_wallet_created_id` on `(walletId, createdAt, id)`) already defined in entities. `migration:create` reports "No changes required, schema is up-to-date". |
+| T040 | ✅ Completed | PendingReferenceWorker implemented with 5s poll interval (1s jitter), claims up to 50 due `PENDING_REFERENCE` rows via `findPendingReferenceDue`. Re-runs reference resolution per row: validates provider/player/wallet/currency/round match, reference status=PROCESSED, kind compatibility (REFUND→BET only; ROLLBACK→BET/WIN/REFUND), amount match, no prior same-kind reversal. On success: applies balance/ledger (CREDIT for REFUND, inverse of reference for ROLLBACK), marks PROCESSED, sets result_balance snapshot, enqueues WagerTransactionProcessed + WalletBalanceChanged. On failure: if attempts>=10 or age>24h → REJECTED with REFERENCE_NOT_FOUND; else increments attempts with exponential backoff min(2^attempts * 30s, 30min). Integration tests cover: REFUND resolution, ROLLBACK resolution, max attempts rejection, retry scheduling, TTL rejection. |
 
 ---
 

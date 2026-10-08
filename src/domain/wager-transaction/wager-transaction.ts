@@ -44,6 +44,8 @@ export interface WagerTransactionState {
    * is NOT necessarily equal: a CURRENCY_MISMATCH rejection snapshots the
    * wallet currency, so the read-back must not rebuild it from `currency`. */
   resultBalanceCurrency?: string;
+  referenceAttempts: number;
+  referenceNextAttemptAt?: Date;
 }
 
 interface WagerTransactionInternalState {
@@ -52,6 +54,8 @@ interface WagerTransactionInternalState {
   failureCode?: FailureCode;
   processedAt?: Date;
   resultBalance?: Money;
+  referenceAttempts: number;
+  referenceNextAttemptAt?: Date;
 }
 
 export class WagerTransaction {
@@ -71,7 +75,7 @@ export class WagerTransaction {
 
   private _state: WagerTransactionInternalState;
 
-  private constructor(props: WagerTransactionProps, status: WagerTransactionStatus = WagerTransactionStatus.Pending) {
+private constructor(props: WagerTransactionProps, status: WagerTransactionStatus = WagerTransactionStatus.Pending) {
     this.id = props.id;
     this.providerId = props.providerId;
     this.externalTransactionId = props.externalTransactionId;
@@ -91,6 +95,8 @@ export class WagerTransaction {
       failureCode: undefined,
       processedAt: undefined,
       resultBalance: undefined,
+      referenceAttempts: 0,
+      referenceNextAttemptAt: undefined,
     };
   }
 
@@ -136,6 +142,8 @@ export class WagerTransaction {
       resultBalance: state.resultBalance
         ? Money.fromInternal(state.resultBalance, state.resultBalanceCurrency ?? state.currency)
         : undefined,
+      referenceAttempts: state.referenceAttempts ?? 0,
+      referenceNextAttemptAt: state.referenceNextAttemptAt,
     };
     return tx;
   }
@@ -158,6 +166,14 @@ export class WagerTransaction {
 
   get resultBalance(): Money | undefined {
     return this._state.resultBalance;
+  }
+
+  get referenceAttempts(): number {
+    return this._state.referenceAttempts;
+  }
+
+  get referenceNextAttemptAt(): Date | undefined {
+    return this._state.referenceNextAttemptAt;
   }
 
   isTerminal(): boolean {
