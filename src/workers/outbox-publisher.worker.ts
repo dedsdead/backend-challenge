@@ -18,7 +18,7 @@ export class OutboxPublisherWorker {
   private readonly logger = new Logger(OutboxPublisherWorker.name);
   private readonly sqsClient: SQSClient;
   private readonly queueUrl: string;
-  private readonly batchSize = 50;
+  private readonly batchSize = 10;
   private readonly pollIntervalMs = 500;
   private readonly jitterMs = 100;
   private isRunning = false;
