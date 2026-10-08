@@ -44,8 +44,8 @@ export class InvalidTransactionStateError extends DomainError {
 }
 
 export class ReferenceResolutionError extends DomainError {
-  constructor(message: string) {
-    super(message, FailureCode.ReferenceNotFound);
+  constructor(message: string, failureCode: FailureCode = FailureCode.ReferenceNotFound) {
+    super(message, failureCode);
     this.name = 'ReferenceResolutionError';
     Object.setPrototypeOf(this, ReferenceResolutionError.prototype);
   }

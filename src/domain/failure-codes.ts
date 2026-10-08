@@ -2,6 +2,8 @@ export enum FailureCode {
   InsufficientFunds = 'INSUFFICIENT_FUNDS',
   ReversalExceedsBalance = 'REVERSAL_EXCEEDS_BALANCE',
   ReferenceNotFound = 'REFERENCE_NOT_FOUND',
+  ReferenceAmountMismatch = 'REFERENCE_AMOUNT_MISMATCH',
+  ReferenceNotProcessed = 'REFERENCE_NOT_PROCESSED',
   CurrencyMismatch = 'CURRENCY_MISMATCH',
   WalletNotFound = 'WALLET_NOT_FOUND',
   ValidationFailed = 'VALIDATION_FAILED',
@@ -9,12 +11,17 @@ export enum FailureCode {
   WalletExists = 'WALLET_EXISTS',
   ReferenceAlreadyReversed = 'REFERENCE_ALREADY_REVERSED',
   InternalError = 'INTERNAL_ERROR',
+  ReferenceMismatch = 'REFERENCE_MISMATCH',
+  ReferenceInvalidKind = 'REFERENCE_INVALID_KIND',
+  InfrastructureError = 'INFRASTRUCTURE_ERROR',
 }
 
 export const FAILURE_CODE_DESCRIPTIONS: Record<FailureCode, string> = {
   [FailureCode.InsufficientFunds]: 'Insufficient funds to complete the transaction',
   [FailureCode.ReversalExceedsBalance]: 'Reversal amount exceeds current balance',
   [FailureCode.ReferenceNotFound]: 'Referenced transaction not found',
+  [FailureCode.ReferenceAmountMismatch]: 'Reversal amount must equal the referenced transaction amount',
+  [FailureCode.ReferenceNotProcessed]: 'Referenced transaction must be in PROCESSED status',
   [FailureCode.CurrencyMismatch]: 'Transaction currency does not match wallet currency',
   [FailureCode.WalletNotFound]: 'Wallet not found',
   [FailureCode.ValidationFailed]: 'Transaction validation failed',
@@ -22,4 +29,7 @@ export const FAILURE_CODE_DESCRIPTIONS: Record<FailureCode, string> = {
   [FailureCode.WalletExists]: 'Wallet already exists for this player and currency',
   [FailureCode.ReferenceAlreadyReversed]: 'Reference transaction already reversed by this operation type',
   [FailureCode.InternalError]: 'Internal system error',
+  [FailureCode.ReferenceMismatch]: 'Referenced transaction does not match provider, player, wallet, currency, or round',
+  [FailureCode.ReferenceInvalidKind]: 'Referenced transaction kind is not reversible by this operation type',
+  [FailureCode.InfrastructureError]: 'Transient infrastructure failure - safe to retry with the same idempotency key',
 };

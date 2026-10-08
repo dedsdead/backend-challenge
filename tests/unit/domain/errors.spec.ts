@@ -71,6 +71,20 @@ describe('Domain Errors', () => {
       expect(error.name).toBe('ReferenceResolutionError');
       expect(error.failureCode).toBe(FailureCode.ReferenceNotFound);
     });
+
+    it('accepts an explicit failure code override', () => {
+      const mismatch = new ReferenceResolutionError(
+        'Reference belongs to another round',
+        FailureCode.ReferenceMismatch,
+      );
+      expect(mismatch.failureCode).toBe(FailureCode.ReferenceMismatch);
+
+      const invalidKind = new ReferenceResolutionError(
+        'REFUND can only reference a BET',
+        FailureCode.ReferenceInvalidKind,
+      );
+      expect(invalidKind.failureCode).toBe(FailureCode.ReferenceInvalidKind);
+    });
   });
 
   describe('IdempotencyConflictError', () => {

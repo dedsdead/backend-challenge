@@ -290,6 +290,11 @@ describe('WagerTransaction', () => {
       expect(tx.ledgerDirectionFor()).toBe(LedgerDirection.Debit);
     });
 
+    it('ledgerDirectionFor returns Credit for OPENING (spec §9: opening generates a CREDIT entry)', () => {
+      const tx = WagerTransaction.create({ ...baseProps, kind: WagerTransactionKind.Opening, isInternal: true });
+      expect(tx.ledgerDirectionFor()).toBe(LedgerDirection.Credit);
+    });
+
     it('ledgerDirectionFor returns Credit for WIN', () => {
       const tx = WagerTransaction.create({ ...baseProps, kind: WagerTransactionKind.Win });
       expect(tx.ledgerDirectionFor()).toBe(LedgerDirection.Credit);

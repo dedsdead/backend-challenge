@@ -1,6 +1,6 @@
 import { Money } from '../money/money';
 import { WagerTransactionKind, WagerTransactionStatus, LedgerDirection } from '../enums';
-import { InvalidTransactionStateError, ReferenceResolutionError } from '../errors';
+import { InvalidTransactionStateError, ReferenceResolutionError, ValidationError } from '../errors';
 import { FailureCode } from '../failure-codes';
 
 export interface WagerTransactionProps {
@@ -40,6 +40,10 @@ export interface WagerTransactionState {
   processedAt?: Date;
   createdAt: Date;
   resultBalance?: string;
+  /** Currency of the result_balance snapshot — the transaction currency (money)
+   * is NOT necessarily equal: a CURRENCY_MISMATCH rejection snapshots the
+   * wallet currency, so the read-back must not rebuild it from `currency`. */
+  resultBalanceCurrency?: string;
 }
 
 interface WagerTransactionInternalState {
@@ -93,12 +97,12 @@ export class WagerTransaction {
   static create(props: WagerTransactionProps): WagerTransaction {
     if (props.kind === WagerTransactionKind.Refund || props.kind === WagerTransactionKind.Rollback) {
       if (!props.referenceExternalTransactionId) {
-        throw new Error(`${props.kind} requires referenceExternalTransactionId`);
+        throw new ValidationError(`${props.kind} requires referenceExternalTransactionId`);
       }
     }
 
     if (props.kind === WagerTransactionKind.Opening && !props.isInternal) {
-      throw new Error('OPENING must be internal');
+      throw new ValidationError('OPENING must be internal');
     }
 
     return new WagerTransaction(props, WagerTransactionStatus.Pending);
@@ -129,7 +133,9 @@ export class WagerTransaction {
       referenceTransactionId: state.referenceTransactionId,
       failureCode: state.failureCode,
       processedAt: state.processedAt,
-      resultBalance: state.resultBalance ? Money.fromInternal(state.resultBalance, state.currency) : undefined,
+      resultBalance: state.resultBalance
+        ? Money.fromInternal(state.resultBalance, state.resultBalanceCurrency ?? state.currency)
+        : undefined,
     };
     return tx;
   }
@@ -213,8 +219,10 @@ export class WagerTransaction {
   ledgerDirectionFor(reference?: WagerTransaction): LedgerDirection {
     switch (this.kind) {
       case WagerTransactionKind.Bet:
-      case WagerTransactionKind.Opening:
         return LedgerDirection.Debit;
+      case WagerTransactionKind.Opening:
+        // spec §9: an opening balance generates a CREDIT ledger entry
+        return LedgerDirection.Credit;
       case WagerTransactionKind.Win:
       case WagerTransactionKind.Refund:
         return LedgerDirection.Credit;
