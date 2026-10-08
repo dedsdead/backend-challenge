@@ -117,7 +117,7 @@ it('has unique indexes from the entities', async () => {
       expect(rows).toHaveLength(0);
     });
 
-    it('has plain indexes from the entities', async () => {
+it('has plain indexes from the entities', async () => {
       const rows = await exec(
         `SELECT indexname FROM pg_indexes WHERE indexname LIKE 'idx\\_%' ORDER BY indexname`,
       );
@@ -128,6 +128,8 @@ it('has unique indexes from the entities', async () => {
         'idx_ledger_wallet_id',
         'idx_outbox_published_next_attempt',
         'idx_wager_tx_reference_tx_id',
+        'idx_wager_tx_status',
+        'idx_wager_tx_status_ref_next_attempt',
         'idx_wager_tx_wallet_id',
         'idx_wallet_player_id',
       ]);

@@ -30,6 +30,8 @@ export const WagerTransactionEntity = defineEntity({
   indexes: [
     { properties: ['walletId', 'id'], name: 'idx_wager_tx_wallet_id' },
     { properties: ['referenceTransactionId'], name: 'idx_wager_tx_reference_tx_id' },
+    { properties: ['status'], name: 'idx_wager_tx_status' },
+    { properties: ['status', 'referenceNextAttemptAt'], name: 'idx_wager_tx_status_ref_next_attempt' },
   ],
   uniques: [
     { properties: ['idempotencyKey'], name: 'uq_wager_tx_idempotency_key' },
