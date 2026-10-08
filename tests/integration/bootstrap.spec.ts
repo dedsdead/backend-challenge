@@ -6,6 +6,7 @@ import { Type } from 'class-transformer';
 // package `exports` map allows `./*` subpaths (verified: application-config.d.ts).
 import { ApplicationConfig } from '@nestjs/core/application-config';
 import { HttpExceptionFilter } from '../../src/common/http/exception.filter';
+import { acquireTestLock, releaseTestLock } from '../helpers/test-db-lock';
 
 // The `??=` defaults below MUST stay above any module evaluation that triggers
 // AppModule: ConfigModule.forRoot() validates env synchronously at module import
@@ -24,6 +25,7 @@ describe('bootstrap (AppModule)', () => {
   let baseUrl = '';
 
   beforeAll(async () => {
+    await acquireTestLock();
     const { NestFactory } = await import('@nestjs/core');
     const { AppModule } = await import('../../src/app.module');
     app = await NestFactory.create(AppModule, { logger: false });
@@ -37,6 +39,7 @@ describe('bootstrap (AppModule)', () => {
 
   afterAll(async () => {
     await app?.close();
+    await releaseTestLock();
   }, 15_000);
 
   it('wires the filter and pipe as global enhancers', () => {
@@ -97,12 +100,13 @@ describe('bootstrap (AppModule)', () => {
     expect(await res.json()).toEqual({ postgres: 'ok' });
   });
 
-  it('GET /unknown returns 404 with only allowlisted fields', async () => {
+  it('GET /unknown returns 404 with the Phase 4 error contract', async () => {
     const res = await fetch(`${baseUrl}/definitely-not-a-route`);
     expect(res.status).toBe(404);
     const body: Record<string, unknown> = await res.json();
-    expect(Object.keys(body).sort()).toEqual(['error', 'message', 'statusCode']);
+    expect(Object.keys(body).sort()).toEqual(['code', 'message', 'statusCode']);
     expect(body.statusCode).toBe(404);
-    expect(body.error).toBe('Not Found');
+    expect(body.code).toBe('NOT_FOUND');
+    expect(typeof body.message).toBe('string');
   });
 });

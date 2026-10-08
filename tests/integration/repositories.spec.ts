@@ -296,8 +296,8 @@ describe('repository extensions (T022: locking, keyset paging, claims)', () => {
         }),
       );
 
-      expect(await repo.sumByWallet(walletId)).toBe('70.00');
-      expect(await repo.sumByWallet(v4())).toBe('0.00');
+      expect(await repo.sumByWallet(walletId, 'BRL')).toBe('70.00');
+      expect(await repo.sumByWallet(v4(), 'BRL')).toBe('0.00');
       em.clear();
     });
   });

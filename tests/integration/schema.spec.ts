@@ -24,6 +24,7 @@ import { InboxMessage } from '../../src/domain/inbox/inbox-message';
 import { OutboxMessage } from '../../src/domain/outbox/outbox-message';
 import { Money } from '../../src/domain/money/money';
 import { LedgerDirection, WagerTransactionKind } from '../../src/domain/enums';
+import { acquireTestLock, releaseTestLock } from '../helpers/test-db-lock';
 
 describe('migrated schema and repositories', () => {
   let orm: MikroORM;
@@ -40,7 +41,8 @@ describe('migrated schema and repositories', () => {
     'wallet_ledger_entry',
   ];
 
-  beforeAll(async () => {
+beforeAll(async () => {
+    await acquireTestLock();
     orm = await MikroORM.init({
       entities: [
         WalletEntity,
@@ -66,8 +68,9 @@ describe('migrated schema and repositories', () => {
     await em.nativeDelete(OutboxMessageEntity, {} as never);
   });
 
-  afterAll(async () => {
+afterAll(async () => {
     await orm.close();
+    await releaseTestLock();
   });
 
   describe('schema structure', () => {
@@ -94,7 +97,7 @@ describe('migrated schema and repositories', () => {
       ]);
     });
 
-    it('has unique indexes from the entities', async () => {
+it('has unique indexes from the entities', async () => {
       const rows = await exec(
         `SELECT indexname FROM pg_indexes WHERE indexname LIKE 'uq\\_%' ORDER BY indexname`,
       );
@@ -107,6 +110,13 @@ describe('migrated schema and repositories', () => {
       ]);
     });
 
+    it('has NO foreign keys (deliberate: WALLET_NOT_FOUND rejection rows intentionally store dangling wallet_id)', async () => {
+      const rows = await exec(
+        `SELECT conname FROM pg_constraint WHERE connamespace = 'public'::regnamespace AND contype = 'f' ORDER BY conname`,
+      );
+      expect(rows).toHaveLength(0);
+    });
+
     it('has plain indexes from the entities', async () => {
       const rows = await exec(
         `SELECT indexname FROM pg_indexes WHERE indexname LIKE 'idx\\_%' ORDER BY indexname`,
@@ -114,6 +124,7 @@ describe('migrated schema and repositories', () => {
       expect(rows.map((r) => r.indexname)).toEqual([
         'idx_inbox_consumer_message',
         'idx_ledger_transaction_id',
+        'idx_ledger_wallet_created_id',
         'idx_ledger_wallet_id',
         'idx_outbox_published_next_attempt',
         'idx_wager_tx_reference_tx_id',
