@@ -17,7 +17,7 @@ specification (`../README.md`) and [architecture.md](architecture.md).
 | Reconciliation | Recomputing balance from the ledger and reporting (never silently fixing) divergence. | spec §9 |
 | Double-entry ledger | Optional differential: paired debit/credit entries per transaction. Not required. | spec §6.4 |
 | `PENDING` | Internal in-flight state only — never returned in HTTP responses (clarified 2026-10-06); spec §6.3: accepted, not yet applied. | spec §6.3, plan §4 |
-| `PENDING_REFERENCE` | Waiting for the referenced transaction; reprocessed by scheduled worker with backoff. | spec §7.1 |
+| `PENDING_REFERENCE` | Waiting for the referenced transaction; reprocessed by scheduled worker with backoff. Columns `reference_attempts` / `reference_next_attempt_at` exist since migration 001; the worker itself is planned (Phase 7). | spec §7.1 |
 | `PROCESSED` / `REJECTED` / `FAILED` | Terminal states — no further transitions; attempting one is a programming error. | spec §6.3 |
 | `failureCode` | Stable, machine-readable reason for rejection/failure; taxonomy defined by the implementation. | spec §7.2 |
 | `code` | Stable HTTP error-class identifier in API response bodies (e.g. `UNAUTHORIZED`, `ROLE_FORBIDDEN`, `VALIDATION_ERROR`) — distinct from `failureCode`, which is domain-level. | plan §4 |
@@ -28,12 +28,13 @@ specification (`../README.md`) and [architecture.md](architecture.md).
 
 | Term | Definition |
 |---|---|
-| Inbox | Persistent dedup record per `(consumerName, messageId)`; prevents duplicate effects from redelivery. |
-| Outbox | Event rows written in the same SQL transaction as the financial change; a worker publishes them post-commit. |
+| Inbox | Persistent dedup record per `(consumerName, messageId)`; prevents duplicate effects from redelivery. `inbox_message` table + repository exist (Phase 3); rows are written by `SubmitTransactionUseCase` for SQS ingress since Phase 4 (`src/modules/wagering/submit-transaction.use-case.ts`, step 1); the SQS consumer that invokes it is planned (Phase 6). |
+| Outbox | Event rows written in the same SQL transaction as the financial change; a worker publishes them post-commit. `outbox_message` table + repositories (incl. `claimDueBatch`) exist (Phase 3) and the Phase 4 use cases enqueue rows in the same transaction; the publisher worker is planned (Phase 7). |
 | At-least-once | Delivery guarantee assumed everywhere: duplicates are normal, effects must be idempotent. |
 | Lost update | Concurrent writes silently overwriting each other; prevented by the chosen concurrency strategy per `walletId`. |
 | Optimistic locking | Conflict detection via `version` increment with bounded retry. |
-| Pessimistic locking | Row-level lock held for the duration of the balance change. |
+| Pessimistic locking | Row-level lock held for the duration of the balance change. Implemented as `WalletRepository.findByIdForUpdate` (`LockMode.PESSIMISTIC_WRITE` in `src/database/repositories/mikro-orm.repositories.ts`); called inside `em.transactional(...)` by `SubmitTransactionUseCase` (step 3) since Phase 4 — under the pinned EM/DI decision every wallet read is also wrapped in a short transaction (root `EntityManager` as transaction factory, per-tx repositories, `allowGlobalContext: false`). The Phase 5 concurrency suite (T030–T033) that proves contention behavior is still unwritten. |
+| Keyset cursor (`LedgerCursor` / `LedgerPage`) | Newest-first pagination on `(created_at, id)` via `WalletLedgerEntryRepository.pageByCursor` — parameterized, no `OFFSET`; `nextCursor` is `null` on the last page. |
 | DLQ | Dead-letter queue (`wager-transactions-dlq.fifo`) for messages exceeding the attempt limit. |
 | FIFO queue | SQS queue with ordering/dedup by `MessageGroupId` — an optimization only, never the consistency guarantee. |
 | IaC | Infrastructure as Code — version-controlled infrastructure definitions; local only today (`docker-compose.yml`), no cloud IaC yet. |
@@ -49,7 +50,7 @@ specification (`../README.md`) and [architecture.md](architecture.md).
   (e.g. `WalletBalanceChanged`), with `version` on the type — never a loose string.
 - **Enums**: SCREAMING_SNAKE values behind PascalCase members
   (`WagerTransactionKind.Bet = "BET"`).
-- **Idempotency key**: `{providerId}:{externalTransactionId}` (spec §9 default).
+- **Idempotency key**: required `Idempotency-Key` header; spec §9 recommends the value `{providerId}:{externalTransactionId}`.
 - **Queues**: `wager-transactions.fifo` / `wager-transactions-dlq.fifo`.
 - **Health endpoints**: `/health/live`, `/health/ready`.
 - **Docs files**: kebab-case; one file per module/feature/ADR in its `docs/` subfolder.

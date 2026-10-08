@@ -28,19 +28,29 @@ type-check and transpiles decorators differently from `tsc`/`node-ts`, and `@mik
 registers providers under tokens that are easy to mismatch. Every symptom in this pattern fails
 *silently* or with a misleading message (constructor DI reports `can't resolve dependencies`,
 a swallowed `TypeError` becomes a `console.warn`, zero entities throw a hard error). Use this
-whenever you touch: `tsconfig.json`, `src/app.module.ts`, a new `@Injectable()` that needs the
+whenever you touch: `tsconfig.json`, `src/app.module.ts`, `src/database/mikro-orm.config.ts`,
+a new `@Injectable()` that needs the
 `EntityManager`, a new env var, a new integration/e2e spec, or the docker stack — i.e. all of
 Phases 2–9.
 
 ## Source of Truth Files
 
 - `tsconfig.json` — decorator metadata + Bun module resolution (L5–L9, L14)
-- `src/app.module.ts` — `ConfigModule.forRoot` (L10), `MikroOrmModule.forRootAsync` (L11–L21)
-- `src/config/env.validation.ts` — `EnvSchema` (L24), `validateEnv` (L69), throw (L85)
+- `src/app.module.ts` — `ConfigModule.forRoot` (L43), `MikroOrmModule.forRootAsync`
+  (L44–L55; the factory spreads `mikroOrmConfig` from
+  `src/database/mikro-orm.config.ts`, Phase 3); Phase 4 added the `WalletsModule` /
+  `WageringModule` imports and the `ValidationPipe` flags + `exceptionFactory`
+  (L60–L80)
+- `src/database/mikro-orm.config.ts` — shared options object (entities, migrations,
+  `schemaGenerator.ignoreTriggers`, `allowGlobalContext: false`) read by both Nest DI and
+  the `mikro-orm` CLI (Phase 3)
+- `src/config/env.validation.ts` — `EnvSchema` (L28), `validateEnv` (L73), throw (L89)
 - `src/health/health.service.ts` — canonical `@Inject(EntityManager)` usage (L2, L7)
 - `tests/integration/bootstrap.spec.ts` — canonical integration harness (env `??=` block,
   dynamic `import()` in `beforeAll`, `listen(0, '127.0.0.1')`, 15s hook timeout)
-- `package.json` scripts: `validate` (`tsc --noEmit`), `test`, `test:unit`, `test:integration`
+- `package.json` scripts: `validate` (`tsc --noEmit`), `test`, `test:unit`, `test:integration`,
+  `test:concurrency`, `mikro-orm` (migration CLI — always pass
+  `--config src/database/mikro-orm.config.ts`, see `docs/infrastructure.md`)
 - Library internals that define the rules:
   - `node_modules/@mikro-orm/nestjs/mikro-orm.common.js` (`getEntityManagerToken` L30, `InjectEntityManager` L37)
   - `node_modules/@mikro-orm/nestjs/mikro-orm-core.module.js` (`createEntityManager` L80–L111)
@@ -48,22 +58,32 @@ Phases 2–9.
   - `node_modules/@mikro-orm/core/utils/Configuration.js` (L436–L437)
   - `node_modules/@nestjs/config/dist/config.module.js` (`options.validate(config)` L52–L55)
 - Session record: `docs/plans/20261006111327-full-wagering-processor-plan.md` → "Execution Log" →
-  `2026-10-06 — Phase 1` (Bun upgrade, MikroORM deviations, verification evidence)
+  `2026-10-06 — Phase 1` (Bun upgrade, MikroORM deviations, verification evidence),
+  `2026-10-07 — Phases 2 + 3` (entities/migrations/repositories, app.module factory spread), and
+  `2026-10-08 — Phase 4` (wallets/wagering modules, exception-filter rewrite, pinned
+  EM/DI decision)
 
 ## Current Implementation Snapshot
 
 - **Runtime**: Bun `1.4.2` (`bun --version`), scripts `dev: bun run src/main.ts`,
   `validate: tsc --noEmit` (TypeScript `7.0.2`), `test: bun test` with
-  `test:unit` / `test:integration` / `test:concurrency` (dir created Phase 5) splits.
+  `test:unit` / `test:integration` / `test:concurrency` (directory exists but stays empty
+  until Phase 5) splits.
 - **`tsconfig.json`**: `experimentalDecorators: true`, `emitDecoratorMetadata: true`,
   `module: esnext`, `moduleResolution: bundler`, `types: ["bun"]`, `strict`,
   `noUncheckedIndexedAccess`, `include: [src, tests]`.
 - **`src/app.module.ts`**: `ConfigModule.forRoot({ isGlobal: true, validate: validateEnv })`;
   `MikroOrmModule.forRootAsync({ driver: PostgreSqlDriver, useFactory, inject: [ConfigService] })`
-  where the factory returns `clientUrl: config.getOrThrow('DATABASE_URL')`,
-  `autoLoadEntities: true`, `discovery: { warnWhenNoEntities: false }`,
-  `migrations: { tableName: 'mikro_orm_migrations' }`. Global `ValidationPipe` and
-  `HttpExceptionFilter` are registered as DI providers — `{ provide: APP_PIPE, useValue }`
+  where the factory spreads `mikroOrmConfig` from `src/database/mikro-orm.config.ts`
+  (entities, migrations, `schemaGenerator.ignoreTriggers`, `allowGlobalContext: false`)
+  and layers `DATABASE_NAME` / `DATABASE_USER` / `DATABASE_PASSWORD` / `DATABASE_HOST` /
+  `DATABASE_PORT` over the config defaults — the ORM does **not** parse `DATABASE_URL`
+  (known env-contract split — still open after Phase 4; `docs/infrastructure.md` →
+  Deferred gaps). Global `ValidationPipe` (`whitelist` + `forbidNonWhitelisted` +
+  `transform`, with the Phase 4 `exceptionFactory` that flattens class-validator
+  children to dotted paths like `money.amount` with non-empty constraints — AC-24/G9)
+  and `HttpExceptionFilter` are registered as DI providers — `{ provide: APP_PIPE,
+  useValue }`
   and `{ provide: APP_FILTER, useExisting: HttpExceptionFilter }` (with the class also in
   `providers`) — so any app built from `AppModule` (including the integration harness)
   gets the real wiring; `main.ts` no longer registers globals via `useGlobal*`.
@@ -84,31 +104,51 @@ Phases 2–9.
   (4566, `SERVICES: sqs`), `quay.io/keycloak/keycloak:26.8` (`start-dev --import-realm`,
   mounts `./keycloak/realm-export.json`); all three have healthchecks and bind
   `127.0.0.1` only; no app container (app runs on host via Bun).
-- **Tests**: 4 spec files pass (current counts live in the plan Execution Log) —
-  `tests/unit/config/env.validation.spec.ts`,
+- **Tests**: 31 spec files pass (353 tests / 1222 expects as of 2026-10-08; current counts
+  live in the plan Execution Log) — `tests/unit/config/env.validation.spec.ts`,
   `tests/unit/health/health.service.spec.ts` (services constructed directly with a mocked EM,
-  no DI container), `tests/unit/common/http/exception.filter.spec.ts` (allowlist,
-  statusCode precedence, 5xx logging/credential redaction, `headersSent`),
-  `tests/integration/bootstrap.spec.ts` (global wiring, health, 404 contract).
+  no DI container), `tests/unit/common/http/exception.filter.spec.ts` (pinned
+  `{statusCode, code, message, ...}` contract, domain-error mapping, 503 contract,
+  unknown/http-errors handling, 5xx logging/credential redaction, `headersSent`),
+  `tests/integration/bootstrap.spec.ts` (global wiring, health, Phase 4 error
+  contract on 404); plus
+  Phase 2 `tests/unit/domain/*.spec.ts` (9 files), Phase 3
+  `tests/integration/schema.spec.ts`, `tests/integration/repositories.spec.ts`,
+  `tests/integration/entities/*.spec.ts` (4 files), and Phase 4
+  `tests/integration/{http-api,wallets.http,wagering.http,wallets.service,submit-transaction.use-case}.spec.ts`
+  with `tests/unit/modules/`, `tests/unit/common/dto/`, `tests/unit/common/idempotency/`.
 
 ## Planned / Optional Extensions (If Applicable)
 
+*Implemented since this pattern was written:* (Phase 3, 2026-10-07) entity classes in
+`src/database/entities/`, the shared options file `src/database/mikro-orm.config.ts`
+(read by both Nest DI and the `mikro-orm` CLI), the migration chain in
+`src/database/migrations/` (001 applied), and the persistence integration suites
+(`schema.spec.ts`, `repositories.spec.ts`, `entities/*.spec.ts`).
+
+Also (Phase 4, 2026-10-08) the **EM/DI scope decision is pinned**: services inject the
+root `EntityManager` as a *transaction factory* (`@Inject(EntityManager)`), then
+construct repositories per transaction inside `em.transactional(...)` —
+`allowGlobalContext` stays `false`, reads are wrapped in short transactions, and
+repositories are never shared singletons (plan Execution Log, 2026-10-08; do not
+"unwire" reads from transactions).
+
 *Not implemented — do not assume they exist:*
-- **Phase 3**: `MikroOrmModule.forFeature([...])`, entity classes, `mikro-orm` CLI migrations
-  (`package.json` already exposes the `mikro-orm` script, no `mikro-orm.config.ts` yet).
 - **Phase 8**: `@Public()` consumed by a global JWT guard; `SQS` probe added to `GET /health/ready`.
-- **Phase 5**: `tests/concurrency/` directory for the `test:concurrency` script.
-- Consider dropping `discovery.warnWhenNoEntities: false` once entities exist — optional; keeping
-  it is harmless and keeps early-phase boots stable.
+- **Phase 5**: `tests/concurrency/` content for the `test:concurrency` script (directory exists, empty).
+- `MikroOrmModule.forFeature(...)` is not used — repositories take the injected
+  `EntityManager` directly; new entities are registered by adding them to the `entities`
+  array in `src/database/mikro-orm.config.ts` (the CLI diffs against that same array).
 
 ## Pattern Overview
 
 Keep Bun's *legacy* decorator metadata emit on (`experimentalDecorators` + `emitDecoratorMetadata`),
 keep module resolution on `esnext`/`bundler`, inject MikroORM's `EntityManager` through the
 **core class token** with an explicit `@Inject(EntityManager)` **value** import, put `driver` on the
-`forRootAsync` options object (not only inside the factory), silence the zero-entity discovery
-throw, and bootstrap integration tests via **dynamic** `await import()` after assigning env
-defaults — then verify with `bun run validate` + `bun test` + `docker compose … --wait`.
+`forRootAsync` options object (not only inside the factory), keep entities/migrations in the
+shared `src/database/mikro-orm.config.ts` (the zero-entity discovery throw was a Phase 1–2
+stopgap — G4), and bootstrap app-level integration tests via **dynamic** `await import()`
+after assigning env defaults — then verify with `bun run validate` + `bun test` + `docker compose … --wait`.
 
 ## Implementation Steps
 
@@ -163,10 +203,10 @@ export function validateEnv(config: Record<string, unknown>): EnvSchema {
 Key points:
 - `ConfigModule.forRoot({ validate: validateEnv })` runs **synchronously during evaluation of
   `src/app.module.ts`** (`@nestjs/config/dist/config.module.js:53` called from
-  `app.module.ts:10`). Any file that **statically** imports `AppModule` therefore validates env
+  `app.module.ts:14`). Any file that **statically** imports `AppModule` therefore validates env
   *before its own module body runs* — verified: with `.env` absent, a static-import spec dies with
   `# Unhandled error between tests … Invalid environment configuration — DATABASE_URL: …`
-  (`env.validation.ts:85` ← `config.module.js:53` ← `app.module.ts:10`).
+  (`env.validation.ts:89` ← `config.module.js:53` ← `app.module.ts:14`).
 - Consequence: test specs must set `process.env.X ??= …` at the top and import `AppModule`
   **dynamically** inside `beforeAll` (Step 5).
 - Bun **auto-loads `.env` from cwd** (verified: `bun -e` in repo root sees `DATABASE_URL`,
@@ -181,10 +221,12 @@ Key points:
 MikroOrmModule.forRootAsync({
   driver: PostgreSqlDriver,            // ← OUTSIDE the factory: required, see gotcha G3
   useFactory: (config: ConfigService) => ({
-    clientUrl: config.getOrThrow<string>('DATABASE_URL'),
-    autoLoadEntities: true,
-    discovery: { warnWhenNoEntities: false },  // ← required until entities exist (G4)
-    migrations: { tableName: 'mikro_orm_migrations' },
+    ...mikroOrmConfig,                 // ← entities/migrations/schemaGenerator from src/database/mikro-orm.config.ts
+    dbName: config.get<string>('DATABASE_NAME') ?? mikroOrmConfig.dbName,
+    user: config.get<string>('DATABASE_USER') ?? mikroOrmConfig.user,
+    password: config.get<string>('DATABASE_PASSWORD') ?? mikroOrmConfig.password,
+    host: config.get<string>('DATABASE_HOST') ?? mikroOrmConfig.host,
+    port: config.get<number>('DATABASE_PORT') ?? mikroOrmConfig.port,
   }),
   inject: [ConfigService],
 }),
@@ -194,8 +236,14 @@ Key points:
 - `driver` must appear on the `forRootAsync` options object. `MikroOrmCoreModule.createEntityManager`
   is called *before* DI exists; it prefers the `driver` hint and only falls back to
   `await options.useFactory()` **with no arguments**.
-- `autoLoadEntities: true` makes `MikroOrmModule.forFeature()` (Phase 3) self-registering —
-  no `entities: []` array to maintain.
+- Options live in `src/database/mikro-orm.config.ts` (spread by the factory) because the
+  `mikro-orm` CLI reads the same file — one source of truth for entities and migrations.
+  Add new entities to its `entities` array or the CLI will not diff them.
+- The factory layers the discrete `DATABASE_*` vars over the config defaults; `clientUrl` /
+  `DATABASE_URL` is **not** consumed by the ORM (known env-contract split — still open
+  after Phase 4 — `docs/infrastructure.md` → Deferred gaps).
+- `autoLoadEntities` and `discovery: { warnWhenNoEntities: false }` are no longer set:
+  entities exist since Phase 3 (they were Phase 1–2 stopgaps — see gotcha G4).
 
 ### Step 4: Injecting the EntityManager — any new `@Injectable()` service
 
@@ -226,7 +274,7 @@ Key points:
 - For a *named* context (`contextName: 'x'`), the token becomes `` `${name}_EntityManager` ``
   (`mikro-orm.common.js:30`) and only then is `@InjectEntityManager('x')` correct.
 
-### Step 5: Integration/e2e harness — `tests/integration/*.spec.ts`
+### Step 5: App-level integration/e2e harness — `tests/integration/bootstrap.spec.ts`
 
 ```ts
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
@@ -264,6 +312,11 @@ describe('bootstrap (AppModule)', () => {
 Key points:
 - **Top-of-file `??=` defaults + dynamic `import()` inside `beforeAll` are both mandatory**
   (defaults first so validation passes; dynamic so they run *before* `AppModule` is evaluated).
+  This harness applies to specs that boot the Nest app (HTTP/e2e). DB-only integration
+  specs (`tests/integration/schema.spec.ts`, `repositories.spec.ts`, `entities/*.spec.ts`)
+  do **not** boot `AppModule`: they call `MikroORM.init(...)` directly against the local
+  compose PostgreSQL (hard-coded local credentials) and clean up with `TRUNCATE`/`DELETE` —
+  see the raw-SQL/locking pattern doc.
 - `import type { INestApplication }` is correct here — it is used only in a type position
   and carries no token (the `address()` narrowing guard needs no `as` cast).
 - `logger: false` keeps assertion output readable; `listen(0, '127.0.0.1')` + `address().port`
@@ -295,13 +348,14 @@ export class BetsService {
   constructor(@Inject(EntityManager) private readonly em: EntityManager) {}
 }
 
-// 2. no extra module registration: autoLoadEntities + forFeature (Phase 3) handles it
+// 2. entity registration: add the entity to `entities` in src/database/mikro-orm.config.ts
+//    (single source of truth for Nest DI *and* the mikro-orm CLI diff — no forFeature needed)
 // 3. spec (unit): new BetsService({ getConnection: () => ({ execute }) } as unknown as EntityManager)
 // 4. spec (integration): copy tests/integration/bootstrap.spec.ts harness (env ??= + dynamic import)
 // 5. gates: bun run validate && bun test
 ```
 
-## Gotchas (all verified this session)
+## Gotchas (all verified in Phases 1–3)
 
 - **G1 — Bun decorator flags.** `emitDecoratorMetadata: false` → no `design:paramtypes` at all
   (Nest: `can't resolve dependencies`). Bun `1.3.14` ignored the flags at runtime
@@ -323,7 +377,8 @@ export class BetsService {
 - **G4 — zero entities is a hard error.** `MikroORM.init()` with `entities.length === 0` throws
   `No entities found, please use \`entities\` option` (`Configuration.js:436–437`, default
   `discovery.warnWhenNoEntities: true` despite the "warn" name). `discovery: { warnWhenNoEntities: false }`
-  is mandatory for Phases 1–2 (no entities yet) — verified both branches.
+  was mandatory for Phases 1–2 (no entities yet) — verified both branches; removed in
+  Phase 3 when `src/database/mikro-orm.config.ts` began enumerating entities explicitly.
 - **G5 — env is validated at `AppModule` *import* time.** Static `import { AppModule }` in a spec
   → `# Unhandled error between tests` even if you set `process.env` in the module body; dynamic
   `await import('../../src/app.module')` inside `beforeAll` → passes with `.env` removed
@@ -343,19 +398,27 @@ export class BetsService {
 - [ ] `tsconfig.json` keeps `experimentalDecorators` **and** `emitDecoratorMetadata`, `module: esnext`,
       `moduleResolution: bundler`, `types: ["bun"]` — do not "modernize" to `nodenext` (TS1479 + `bun test` breaks).
 - [ ] Every DB-touching service uses `@Inject(EntityManager)` with a **value** import from `@mikro-orm/core`.
-- [ ] `MikroOrmModule.forRootAsync` carries `driver: PostgreSqlDriver` on the options object **and**
-      `discovery: { warnWhenNoEntities: false }`, `autoLoadEntities: true`.
+- [ ] `MikroOrmModule.forRootAsync` carries `driver: PostgreSqlDriver` on the options object;
+      all other options spread from `src/database/mikro-orm.config.ts` — never inline a second
+      copy (entities/migrations) in `app.module.ts`; new entities go into that file's `entities`
+      array.
 - [ ] New **required** env vars go in `EnvSchema` + `.env.example` + the `??=` block of every
-      integration spec (3 places); new **optional** vars additionally get a `??=` default in
+      app-level integration spec (3 places; DB-only specs hard-code local credentials and have
+      no `??=` block); new **optional** vars additionally get a `??=` default in
       `validateEnv` (required vars must fail boot, so they get no default).
-- [ ] Integration specs: env `??=` at file top, dynamic `import()` of `AppModule` in `beforeAll`,
-      `listen(0, '127.0.0.1')`, `app.close()` in `afterAll`.
+- [ ] App-level integration specs (those booting `AppModule`): env `??=` at file top, dynamic
+      `import()` of `AppModule` in `beforeAll`, `listen(0, '127.0.0.1')`, `app.close()` in
+      `afterAll`. DB-only integration specs skip the Nest harness — `MikroORM.init()` against
+      local compose PG instead (raw-SQL/locking pattern doc).
 - [ ] `package.json` keeps `"engines": { "bun": ">=1.4.2" }` — the decorator-metadata floor (G1).
 - [ ] Compose ports and the app listener stay loopback by default: compose `127.0.0.1:PORT:PORT`
       bindings + `HOST=127.0.0.1` (opt into `0.0.0.0` explicitly, never via code default).
-- [ ] Error responses use the `ALLOWED_FIELDS` allowlist in `src/common/http/exception.filter.ts`
-      (`message`/`error`/`errorCode`) — extend the list deliberately at T028; never spread
-      `getResponse()` into the client response, and keep `statusCode` from `getStatus()`.
+- [ ] Error responses follow the pinned body contract in `src/common/http/exception.filter.ts`
+      (`{ statusCode, code, message, failureCode?, status?, transactionId?,
+      idempotentReplay?, errors?, correlationId? }` — Phase 4 rewrite, T028): extend the
+      contract deliberately; never spread `getResponse()` into the client response, keep
+      `statusCode` from `getStatus()`, and keep ≥500 messages masked (503 exempt — the
+      pinned operator health hint).
 - [ ] Every change passes `bun run validate` (Bun itself never type-checks) and `bun test`.
 - [ ] Compose changes pass `docker compose config -q` and `docker compose up -d --wait`.
 
@@ -382,7 +445,11 @@ export class BetsService {
 
 ## Related Patterns / Docs
 
-- `docs/plans/20261006111327-full-wagering-processor-plan.md` — Phase 1 tasks + Execution Log (evidence format)
+- `docs/solutions/patterns/backend/mikro-orm-v7-raw-sql-locking-and-db-managed-columns.md` —
+  raw SQL (`em.execute` + `?`), transaction affinity, DB-managed column stripping, lock tests
+  (Phases 2–3 companion to this doc)
+- `docs/plans/20261006111327-full-wagering-processor-plan.md` — Phase 1–4 tasks + Execution Log (evidence format)
+- `docs/infrastructure.md` — migration commands, env-contract split, Deferred gaps
 - `.opencode/skills/nestjs-conventions/SKILL.md`, `.opencode/skills/bullmq/SKILL.md` (Phases 6–7)
 - `.opencode/skills/typeorm/SKILL.md` → migration discipline analogue for `@mikro-orm/migrations`
 - Future: `docs/solutions/patterns/backend/` — paginated list endpoints, outbox/SQS pipeline patterns
@@ -391,15 +458,19 @@ export class BetsService {
 
 1. **`tsconfig.json` / `package.json`** — re-run `bun run validate`; confirm `bun --version` ≥ 1.4.2
    if constructor DI errors appear.
-2. **`src/app.module.ts`** — if you touch `MikroOrmModule.forRootAsync`, keep `driver` (options level),
-   `discovery.warnWhenNoEntities`, `autoLoadEntities`; then boot `bun run dev` and hit `/health/ready`.
+2. **`src/app.module.ts` / `src/database/mikro-orm.config.ts`** — if you touch
+   `MikroOrmModule.forRootAsync`, keep `driver` (options level) and the `mikroOrmConfig` spread
+   (no duplicated options; entities/migrations live in that one file); then boot `bun run dev`
+   and hit `/health/ready`.
 3. **New service/controller** — value-import + `@Inject(EntityManager)`; add the module to
    `AppModule.imports` (or a parent module) before wiring the controller.
-4. **New env var** — required: `EnvSchema` → `.env.example` → all integration-spec `??=` blocks;
-   optional: additionally a `??=` default in `validateEnv` (cross-file sync; forgetting the spec
-   block breaks CI without `.env`).
-5. **New test** — unit first (stub constructor args), then integration harness copied from
+4. **New env var** — required: `EnvSchema` → `.env.example` → all app-level integration-spec
+   `??=` blocks; optional: additionally a `??=` default in `validateEnv` (cross-file sync;
+   forgetting the spec block breaks CI without `.env`).
+5. **New test** — unit first (stub constructor args); app-level: integration harness copied from
    `tests/integration/bootstrap.spec.ts` (dynamic import, `listen(0, '127.0.0.1')`,
-   15s `beforeAll` timeout).
-6. **Gates (fresh evidence)**: `bun run validate` (exit 0) → `bun test` (0 fail) →
+   15s `beforeAll` timeout); DB-level: `MikroORM.init()` harness copied from
+   `tests/integration/repositories.spec.ts` (`TRUNCATE` cleanup, `em.clear()` after rejected flush).
+6. **Gates (fresh evidence)**: `docker compose up -d --wait` (3/3 healthy) →
+   `bun run validate` (exit 0) → `bun test` (0 fail) →
    `docker compose config -q` (exit 0) → optional `bun run dev` smoke of `/health/live`, `/health/ready`.
