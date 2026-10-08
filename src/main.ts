@@ -1,6 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 let app: INestApplication | undefined;
@@ -8,6 +9,10 @@ let app: INestApplication | undefined;
 async function bootstrap(): Promise<void> {
   app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.enableShutdownHooks();
+
+  // Security hardening
+  app.use(helmet());
+  app.getHttpAdapter().getInstance().disable('x-powered-by');
 
   const config = app.get(ConfigService);
   await app.listen(
