@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/core';
 import { WagerTransaction } from '../../domain/wager-transaction/wager-transaction';
 import { LedgerMovement } from '../../domain/wallet/wallet';
@@ -65,6 +65,8 @@ export interface SubmitTransactionResult {
 
 @Injectable()
 export class SubmitTransactionUseCase {
+  private readonly logger = new Logger(SubmitTransactionUseCase.name);
+
   constructor(
     @Inject(EntityManager) private readonly em: EntityManager,
   ) {}
@@ -106,6 +108,7 @@ export class SubmitTransactionUseCase {
             `Idempotency key ${cmd.idempotencyKey} was used with a different payload`,
           );
         }
+        metrics.wageringDuplicatesTotal.inc();
         return this.replay(byKey);
       }
 
@@ -201,6 +204,7 @@ export class SubmitTransactionUseCase {
               `Idempotency key ${cmd.idempotencyKey} was used with a different payload`,
             );
           }
+          metrics.wageringDuplicatesTotal.inc();
           return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), this.replay(storedForDelivery);
         }
         await inbox.save(
@@ -222,6 +226,7 @@ export class SubmitTransactionUseCase {
             `Idempotency key ${cmd.idempotencyKey} was used with a different payload`,
           );
         }
+        metrics.wageringDuplicatesTotal.inc();
         return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), this.replay(existing);
       }
 
@@ -303,6 +308,14 @@ export class SubmitTransactionUseCase {
           }),
         );
 recordTxMetric(wagerTx.status);
+    // Structured business-outcome log (plan T045): bindings only, never the
+    // financial payload itself.
+    this.logger.warn(`Transaction rejected: ${failureCode}`, {
+      transactionId: wagerTx.id,
+      walletId: cmd.walletId,
+      providerId: cmd.providerId,
+      failureCode,
+    });
     return metrics.wageringProcessingSeconds.observe((Date.now() - txStart) / 1000), {
         transactionId: wagerTx.id,
         status: wagerTx.status,

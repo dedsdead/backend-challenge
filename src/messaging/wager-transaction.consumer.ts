@@ -5,6 +5,7 @@ import { SubmitTransactionUseCase, SubmitTransactionCommand } from '../modules/w
 import { IdempotencyConflictError, ValidationError } from '../domain/errors';
 import { WagerTransactionKind } from '../domain/enums';
 import { createSqsClient } from './sqs.client';
+import { metrics } from '../common/metrics/metrics';
 
 interface SqsMessageEnvelope {
   messageId: string;
@@ -183,7 +184,7 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
     const receiptHandle = message.ReceiptHandle;
     const correlationId = message.MessageAttributes?.correlationId?.StringValue;
 
-    this.logger.debug(`Processing message ${messageId}`, { correlationId });
+    this.logger.debug(`Processing message ${messageId}`, { correlationId, messageId });
 
     try {
       // Parse and validate message envelope
@@ -218,7 +219,13 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
       }
       this.logger.log(
         `Message ${messageId} processed: ${result.status} (replay=${result.idempotentReplay})`,
-        { correlationId, transactionId: result.transactionId },
+        {
+          correlationId,
+          transactionId: result.transactionId,
+          messageId,
+          providerId: command.providerId,
+          walletId: command.walletId,
+        },
       );
     } catch (error) {
       await this.handleProcessingError(message, receiptHandle, error);
@@ -313,7 +320,7 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
     if (error instanceof ValidationError || error instanceof IdempotencyConflictError) {
       this.logger.warn(
         `Permanent failure for message ${messageId}: ${error.message}`,
-        { correlationId },
+        { correlationId, messageId },
       );
       if (receiptHandle) {
         await this.sendToDlq(message, receiptHandle);
@@ -327,9 +334,11 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
     // So we should not reach here for business rejections
 
     // Transient errors: do NOT delete - let visibility timeout redeliver
+    metrics.wageringSqsRetriesTotal.inc();
     this.logger.error(
       `Transient error processing message ${messageId}, will redeliver`,
-      error instanceof Error ? error.stack : error,
+      error instanceof Error ? error : undefined,
+      { correlationId, messageId },
     );
     // Do NOT delete - message will become visible again after visibility timeout
   }
@@ -352,6 +361,7 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
       );
       // Delete from main queue after successful DLQ send
       await this.deleteMessage(receiptHandle);
+      metrics.wageringDlqReceivedTotal.inc();
       this.logger.log(`Message sent to DLQ: ${message.MessageId}`);
     } catch (error) {
       this.logger.error('Failed to send message to DLQ', error);
