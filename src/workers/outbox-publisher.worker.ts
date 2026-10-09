@@ -5,6 +5,7 @@ import { SQSClient, SendMessageBatchCommand } from '@aws-sdk/client-sqs';
 import { OutboxMessageRepository, MikroOrmOutboxMessageRepository } from '../database/repositories';
 import { createSqsClient } from '../messaging/sqs.client';
 import { OutboxMessage } from '../domain/outbox/outbox-message';
+import { metrics } from '../common/metrics/metrics';
 
 /**
  * Outbox Publisher Worker
@@ -85,6 +86,15 @@ export class OutboxPublisherWorker {
     try {
       await em.transactional(async (tx) => {
         const outboxRepo = new MikroOrmOutboxMessageRepository(tx);
+        // Lag (plan T046): age of the oldest message still unpublished,
+        // sampled right before the claim so the gauge reflects backpressure.
+        const [oldest] = await outboxRepo.findPending(1);
+        metrics.wageringOutboxLag.set(
+          oldest
+            ? Math.max(0, (Date.now() - oldest.occurredAt.getTime()) / 1000)
+            : 0,
+        );
+
         const messages = await outboxRepo.claimDueBatch(tx, this.batchSize);
         if (messages.length === 0) return;
 

@@ -14,10 +14,15 @@ migration 001 applied to the local database 2026-10-07), the use-case/HTTP layer
 endpoints, pinned error contract in `src/common/http/exception.filter.ts`), and
 the **concurrency test suite** (`tests/concurrency/` — hot-wallet, duplicate-flood,
 multi-instance tests proving correctness under real parallelism) exist and pass
-tests (357 pass / 0 fail across 33 files, 2026-10-08); **lock-conflict
-instrumentation** (`src/common/metrics/metrics.ts` + `SubmitTransactionUseCase`)
-is in place; SQS ingress/egress, the outbox publisher, and JWT auth are still
-planned (execution plan + clarifications).
+tests (Phase 8 baseline 2026-10-09: `bun run validate` exit 0, unit 249 pass /
+0 fail, integration suites green run individually, concurrency 3 pass / 0 fail;
+earlier full-suite snapshot 357 pass / 0 fail across 33 files, 2026-10-08);
+**SQS ingress/egress, the
+outbox publisher, and the pending-reference worker** (`src/messaging/`,
+`src/workers/`, Phases 6–7) and **auth + observability** (Phase 8, 2026-10-09 —
+global JWT/roles guards in `src/auth/`, pino logging + correlation middleware +
+`GET /metrics` in `src/observability/`) are in place; **Phase 9** (graded root
+`ARCHITECTURE.md` + doc sync) is still pending (execution plan + clarifications).
 
 **Graded deliverable note:** the challenge grades a root-level `ARCHITECTURE.md`
 (spec §14 documentation points; §2 and §4 also reference it by name). This file is the
@@ -73,8 +78,8 @@ Decisions (source: execution plan + clarifications):
 | Authentication | external IdP (e.g. Keycloak, Zitadel) or documented no-op extension point | ✅ **Keycloak** (OIDC JWT via JWKS; health + `/metrics` open) |
 | Root `ARCHITECTURE.md` | graded artifact required by spec §14 vs. this file as canonical — sync strategy | ✅ **Root summary** (see Graded deliverable note above); sync at plan T053/T054 |
 
-Legend: ✅ = decided 2026-10-06. Implementation state of these rows after Phase 5
-(2026-10-08): **MikroORM** — wired in `src/app.module.ts`, with 5 entities, mappers,
+Legend: ✅ = decided 2026-10-06. Implementation state of these rows after Phase 8
+(2026-10-09): **MikroORM** — wired in `src/app.module.ts`, with 5 entities, mappers,
 and repository ports/implementations in `src/database/`; migration 001 applied;
 `LockMode.PESSIMISTIC_WRITE` used in `WalletRepository.findByIdForUpdate`, called
 inside `em.transactional()` by `SubmitTransactionUseCase`
@@ -84,9 +89,11 @@ as transaction factory, per-tx repositories — see
 [infrastructure.md](infrastructure.md) → Deferred gaps); **pessimistic row lock** —
 used by the Phase 4 submit path and **proven under real parallelism by the Phase 5
 concurrency suite** (`tests/concurrency/` — hot-wallet, duplicate-flood,
-multi-instance tests all pass); **Keycloak** — local container with placeholder realm
-`keycloak/realm-export.json` only, no JWT/JWKS guard yet (Phase 4 endpoints run
-unauthenticated); **root `ARCHITECTURE.md`** — not yet created. Flip these
+multi-instance tests all pass); **Keycloak** — realm fully configured in
+`keycloak/realm-export.json` (roles `transact:read`/`transact:write`, clients,
+4 users — T043) and enforced by the global JWT/roles guards (`src/auth/`, T044;
+health + `GET /metrics` stay `@Public()`); **root `ARCHITECTURE.md`** — not yet
+created. Flip these
 annotations to "implemented" at plan T054.
 
 ## Module and Service Boundaries
@@ -94,6 +101,8 @@ annotations to "implemented" at plan T054.
 | Module | Responsibility | Must not |
 |---|---|---|
 | HTTP controllers | validate/transport, map status codes | contain business rules |
+| Auth guards (`src/auth/`) | global JWT verification (JWKS, issuer/audience) + realm-role enforcement (`@Roles`), `@Public()` opt-out — fail-closed 401/403 | contain business rules or parse tokens outside `JwtGuard` |
+| Observability (`src/observability/`) | pino logging (redaction), correlation-id middleware, `GET /metrics` (Prometheus) | change request/business behavior |
 | SQS consumer | envelope handling, ack lifecycle (inbox dedup runs inside the use case, Phase 4) | duplicate the use case logic |
 | Use case (application service) | orchestrate domain + persistence atomically (inbox dedup, idempotency replay, wallet lock) | bypass domain factories |
 | Domain aggregates (`src/domain/`) | money math, state transitions, invariants | depend on ORM/Nest decorators |
@@ -116,9 +125,9 @@ SQS consumer  ───┘        │
 - **Idempotent submit**: `Idempotency-Key` + `payloadHash` (canonical JSON) → replay
   returns original result; different payload under same key = conflict.
 - **Out-of-order refs**: `REFUND`/`ROLLBACK` without its reference persists as
-  `PENDING_REFERENCE` (submit path implemented in Phase 4); scheduled worker
+  `PENDING_REFERENCE` (submit path implemented in Phase 4); the scheduled worker
   retries with backoff, then rejects with a distinct `failureCode` (worker
-  planned, Phase 7).
+  implemented in Phase 7: `src/workers/pending-reference.worker.ts`).
 - **Reconciliation**: recomputes balance from ledger, reports divergence (never
   silently corrects).
 

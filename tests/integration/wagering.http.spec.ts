@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { v4 } from 'uuid';
 import { acquireTestLock, releaseTestLock } from '../helpers/test-db-lock';
+import { bearer } from '../helpers/keycloak-token';
 
 // T027 (AC-18 HTTP side, AC-19, AC-20/20a, AC-25, AC-28, G4/G5/G12/G14).
-// Phase 4 runs without tokens — guards arrive in plan T044 (Phase 8).
+// Requests carry a real Keycloak token (T044/T048); 401/403 behavior is
+// covered by auth-observability.spec.
 
 process.env.DATABASE_URL ??= 'postgres://postgres:local@localhost:5432/wagering';
 process.env.SQS_QUEUE_URL ??= 'http://localhost:4566/000000000000/wager-transactions.fifo';
@@ -15,8 +17,19 @@ describe('wagering HTTP API (T027)', () => {
   let baseUrl = '';
   let truncate: () => Promise<void> = async () => {};
   let runSql: (sql: string, params?: unknown[]) => Promise<unknown> = async () => [];
+  let auth: Record<string, string> = {};
+
+  const authedFetch = (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> =>
+    globalThis.fetch(input, {
+      ...init,
+      headers: { ...((init?.headers ?? {}) as Record<string, string>), ...auth },
+    });
 
   beforeAll(async () => {
+    auth = await bearer('operator');
     await acquireTestLock();
     const { NestFactory } = await import('@nestjs/core');
     const { AppModule } = await import('../../src/app.module');
@@ -62,7 +75,7 @@ describe('wagering HTTP API (T027)', () => {
   }, 20_000);
 
   const createWallet = async (amount = '1000.00') => {
-    const res = await fetch(`${baseUrl}/wallets`, {
+    const res = await authedFetch(`${baseUrl}/wallets`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -87,7 +100,7 @@ describe('wagering HTTP API (T027)', () => {
   });
 
   const post = (body: unknown, idempotencyKey?: string | null) =>
-    fetch(`${baseUrl}/wagering/transactions`, {
+    authedFetch(`${baseUrl}/wagering/transactions`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -366,7 +379,7 @@ describe('wagering HTTP API (T027)', () => {
       const wallet = await createWallet('1000.00');
       const body = submitBody(wallet.id, wallet.playerId);
       const submitted = await (await post(body)).json();
-      const res = await fetch(`${baseUrl}/wagering/transactions/${submitted.transactionId}`);
+      const res = await authedFetch(`${baseUrl}/wagering/transactions/${submitted.transactionId}`);
       expect(res.status).toBe(200);
       const found = await res.json();
       expect(Object.keys(found).sort()).toEqual([
@@ -388,7 +401,7 @@ describe('wagering HTTP API (T027)', () => {
       const wallet = await createWallet('100.00');
       const body = submitBody(wallet.id, wallet.playerId, { money: { amount: '500.00', currency: 'BRL' } });
       const submitted = await (await post(body)).json();
-      const res = await fetch(`${baseUrl}/wagering/transactions/${submitted.transactionId}`);
+      const res = await authedFetch(`${baseUrl}/wagering/transactions/${submitted.transactionId}`);
       expect(res.status).toBe(200);
       const found = await res.json();
       expect(Object.keys(found).sort()).toEqual([
@@ -411,7 +424,7 @@ describe('wagering HTTP API (T027)', () => {
         referenceExternalTransactionId: `missing-${v4()}`,
       });
       const submitted = await (await post(body)).json();
-      const res = await fetch(`${baseUrl}/wagering/transactions/${submitted.transactionId}`);
+      const res = await authedFetch(`${baseUrl}/wagering/transactions/${submitted.transactionId}`);
       expect(res.status).toBe(200);
       const found = await res.json();
       expect(Object.keys(found).sort()).toEqual([
@@ -426,11 +439,11 @@ describe('wagering HTTP API (T027)', () => {
     });
 
     it('404s an unknown transactionId and 400s a malformed one (AC-20/20a)', async () => {
-      const unknown = await fetch(`${baseUrl}/wagering/transactions/${v4()}`);
+      const unknown = await authedFetch(`${baseUrl}/wagering/transactions/${v4()}`);
       expect(unknown.status).toBe(404);
       expect((await unknown.json()).code).toBe('NOT_FOUND');
 
-      const malformed = await fetch(`${baseUrl}/wagering/transactions/not-a-uuid`);
+      const malformed = await authedFetch(`${baseUrl}/wagering/transactions/not-a-uuid`);
       expect(malformed.status).toBe(400);
       expect((await malformed.json()).code).toBe('VALIDATION_ERROR');
     });
@@ -440,7 +453,7 @@ describe('wagering HTTP API (T027)', () => {
       const body = submitBody(wallet.id, wallet.playerId);
       const submitted = await (await post(body)).json();
 
-      const ok = await fetch(
+      const ok = await authedFetch(
         `${baseUrl}/providers/prov-1/wagering/transactions/${body.externalTransactionId}`,
       );
       expect(ok.status).toBe(200);
@@ -454,13 +467,13 @@ describe('wagering HTTP API (T027)', () => {
         'transactionId',
       ]);
 
-      const foreign = await fetch(
+      const foreign = await authedFetch(
         `${baseUrl}/providers/other-prov/wagering/transactions/${body.externalTransactionId}`,
       );
       expect(foreign.status).toBe(404);
       expect((await foreign.json()).code).toBe('NOT_FOUND');
 
-      const unknownExternal = await fetch(
+      const unknownExternal = await authedFetch(
         `${baseUrl}/providers/prov-1/wagering/transactions/nope-123`,
       );
       expect(unknownExternal.status).toBe(404);

@@ -6,16 +6,20 @@ Phases 1–5 of `plans/20261006111327-full-wagering-processor-plan.md`
 (Foundation & Local Stack, Domain Core & Events, Persistence & Schema, Use Case &
 HTTP API, Concurrency Hardening — all marked ✅ Completed; Phase 3 schema applied
 to the local database 2026-10-07; Phase 5 concurrency suite passing 2026-10-08).
-Status: **foundation + persistence + HTTP API + concurrency hardening implemented**
-— the repo contains the NestJS 12 / Bun application (`src/`, `tests/`),
+Status: **foundation + persistence + HTTP API + concurrency hardening + SQS
+ingestion/workers + auth/observability implemented (Phases 1–8; Phase 8
+completed 2026-10-09)** — the repo contains the NestJS 12 / Bun application
+(`src/`, `tests/`),
 `docker-compose.yml` (PostgreSQL 16, LocalStack 4.13.1, Keycloak 26.8), validated
 env config, MikroORM 7.2.4 entities + repositories, migration 001 applied to the
 local database, the wallet/wagering modules `src/modules/` (2026-10-08), the
 **concurrency test suite** (`tests/concurrency/` — hot-wallet, duplicate-flood,
-multi-instance tests), and **lock-conflict metrics instrumentation**
-(`src/common/metrics/metrics.ts` + `SubmitTransactionUseCase`). No cloud IaC
-exists and cloud/provider topology is still undecided; Phases 6–9 (SQS ingestion,
-workers, auth/observability, graded docs) are pending. Record further realized
+multi-instance tests), the SQS consumer + outbox publisher + pending-reference
+worker (`src/messaging/`, `src/workers/`, Phases 6–7), the global auth guards
+(`src/auth/`), and the observability surface (`src/observability/` — pino
+logging, correlation middleware, `GET /metrics`). No cloud IaC
+exists and cloud/provider topology is still undecided; Phase 9 (graded docs) is
+pending. Record further realized
 decisions in place as implementation lands.
 
 ## Infrastructure Overview
@@ -48,14 +52,14 @@ Local containers (observed names, project = directory name): `backend-challenge-
 
 | Service | Role | Notes |
 |---|---|---|
-| NestJS app (Bun 1.4.2, NestJS 12.1.2) | HTTP API + SQS consumer + workers | must be correct with **3+ concurrent instances**; scaffold, domain, persistence, and the HTTP API implemented (Phases 1–4), consumers/workers planned (Phases 6–7) |
+| NestJS app (Bun 1.4.2, NestJS 12.1.2) | HTTP API + SQS consumer + workers | must be correct with **3+ concurrent instances**; scaffold, domain, persistence, and the HTTP API implemented (Phases 1–4), SQS consumer + workers (Phases 6–7), auth guards + observability (Phase 8) |
 | PostgreSQL | system of record | wallets, ledger, inbox, outbox, idempotency; local image `postgres:16`, host `127.0.0.1:5432`, `postgres`/`local`, db `wagering`; schema owned by migration 001 (see Deployment and Operations) |
 | MikroORM 7.2.4 | ORM + migrator | entities in `src/database/entities/`, config `src/database/mikro-orm.config.ts`, migrations `src/database/migrations/`; wired into Nest DI via `MikroOrmModule.forRootAsync` in `src/app.module.ts` |
-| Keycloak (local IdP) | OIDC token issuer for the HTTP API | local container: `quay.io/keycloak/keycloak:26.8`, `start-dev --import-realm`, port 8080, realm import from `keycloak/realm-export.json` — currently a **placeholder** realm `wagering` (no clients/roles); realm config + OIDC/JWKS guard still planned (plan T043/T044); not probed by readiness (T047) |
-| AWS SQS FIFO | ingress + egress messaging | `wager-transactions.fifo`, `wager-transactions-dlq.fifo` (spec §10); broker runs locally (LocalStack 4.13.1, port 4566, `SERVICES=sqs`) but queues are not created yet and no `queue:setup` script exists (plan T034) |
-| Outbox publisher worker | publishes events post-commit | multi-publisher safe, backoff retry — planned (Phase 7) |
-| `PENDING_REFERENCE` worker | reprocesses out-of-order refs | scheduled, exponential backoff (spec §7.1) — planned (Phase 7); its columns (`reference_attempts`, `reference_next_attempt_at`) already exist in migration 001 |
-| Health endpoints | `GET /health/live`, `GET /health/ready` | implemented (Phase 1, `@Public()` in `src/health/health.controller.ts`); readiness checks PostgreSQL only (`SELECT 1` via the injected MikroORM `EntityManager` in `src/health/health.service.ts`) — SQS probe planned (plan T047), Keycloak excluded (clarifications); unauthenticated |
+| Keycloak (local IdP) | OIDC token issuer for the HTTP API | local container: `quay.io/keycloak/keycloak:26.8`, `start-dev --import-realm`, port 8080, realm import from `keycloak/realm-export.json` — **fully configured** since Phase 8 (T043): realm `wagering`, realm roles `transact:read`/`transact:write`, clients `wagering-api` (bearer-only, audience) + `wagering-cli` (public, direct grant), 4 test users (password `wagering-dev-123`), 11 client scopes; validated by `tests/unit/keycloak/realm-export.spec.ts` + live token fetch (`tests/helpers/keycloak-token.ts`). JWT/JWKS validation is done by the app (`src/auth/jwt.guard.ts`, `src/auth/roles.guard.ts`), **not** by Keycloak probing; **not** probed by readiness (clarifications). Realm re-import happens only when the container is (re)created — `--import-realm` skips an existing realm, so `docker compose up -d --force-recreate keycloak` (or `docker compose down` first) after editing the realm file |
+| AWS SQS FIFO | ingress + egress messaging | `wager-transactions.fifo`, `wager-transactions-dlq.fifo` (spec §10); broker runs locally (LocalStack 4.13.1, port 4566, `SERVICES=sqs`); queues created with the idempotent `bun run queue:setup` (`scripts/create-queues.ts`, `MAX_RECEIVE_COUNT=5`, Phase 6) |
+| Outbox publisher worker | publishes events post-commit | implemented (`src/workers/outbox-publisher.worker.ts`, Phase 7): multi-publisher safe, backoff retry, records the `wagering_outbox_lag` gauge (T046) |
+| `PENDING_REFERENCE` worker | reprocesses out-of-order refs | implemented (`src/workers/pending-reference.worker.ts`, Phase 7): scheduled, exponential backoff, TTL (spec §7.1); its columns (`reference_attempts`, `reference_next_attempt_at`) already exist in migration 001 |
+| Health endpoints | `GET /health/live`, `GET /health/ready` | implemented (Phase 1, `@Public()` in `src/health/health.controller.ts`, honored by the global guards since Phase 8); readiness checks PostgreSQL (`SELECT 1` via the injected MikroORM `EntityManager`) **and** the SQS queue probe (`SQS_PROBER` / `src/health/sqs-prober.ts`, T047) → body `{postgres:'ok', sqs:'ok'}` — Keycloak excluded (clarifications); unauthenticated |
 
 ## Deployment and Operations
 
@@ -65,6 +69,7 @@ Local containers (observed names, project = directory name): `backend-challenge-
   docker compose up -d --wait          # postgres + localstack + keycloak, waits on healthchecks
   copy .env.example .env               # once; .env is gitignored
   bun run mikro-orm migration:up --config src/database/mikro-orm.config.ts
+  bun run queue:setup                  # idempotent; creates wager-transactions.fifo + DLQ (Phase 6)
   bun run dev                          # app on 127.0.0.1:3000 (HOST/PORT from .env)
   ```
 
@@ -76,7 +81,8 @@ Local containers (observed names, project = directory name): `backend-challenge-
   published); bump only after re-verifying the healthchecks in `docker-compose.yml`.
 - **Shutdown**: on `SIGTERM`, finish in-flight messages or return SQS visibility;
   ack only after SQL commit — shutdown hooks enabled (`app.enableShutdownHooks()`
-  in `src/main.ts`); message handling planned with the SQS consumer.
+  in `src/main.ts`); the consumer's drain/stop behavior lives in
+  `src/messaging/wager-transaction.consumer.ts` (Phase 6).
 - **Remote deployment**: not defined — document flow in
   [environments.md](environments.md) (Deployment Differences) when chosen.
 
@@ -107,9 +113,9 @@ Local containers (observed names, project = directory name): `backend-challenge-
   `--config src/database/mikro-orm.config.ts` is **mandatory**: the CLI only probes
   `./src/mikro-orm.config.ts` / `./mikro-orm.config.ts` (and `.js` variants) and fails
   with "MikroORM config file not found" otherwise.
-- **Migration chain**: exactly one migration —
-  `src/database/migrations/Migration20261007000000_InitialMigration.ts` (001). It
-  creates the extensions (`uuid-ossp`, `pgcrypto`), the five domain tables plus
+- **Migration chain**: four migrations in `src/database/migrations/`.
+  (001) `Migration20261007000000_InitialMigration.ts` creates the extensions
+  (`uuid-ossp`, `pgcrypto`), the five domain tables plus
   `mikro_orm_migrations`, all unique indexes (including the partial
   `uq_wager_tx_reference_kind` on `(reference_transaction_id, kind) WHERE status =
   'PROCESSED'`), the CHECK constraints (`ck_wallet_balance_non_negative`,
@@ -117,11 +123,18 @@ Local containers (observed names, project = directory name): `backend-challenge-
   trigger `trg_wallet_ledger_entry_immutable` (function `raise_immutable()`).
   `down()` drops the trigger, function, and the five domain tables but deliberately
   does **not** drop `mikro_orm_migrations` (migrator-owned; comment in the migration).
+  (002) `Migration20261008055955_AddLedgerKeysetIndex.ts` adds
+  `idx_ledger_wallet_created_id (wallet_id, created_at, id)` for ledger keyset
+  pagination; (003) `Migration20261008124755_AddWagerTransactionStatusIndexes.ts`
+  adds `idx_wager_tx_status` and `idx_wager_tx_status_ref_next_attempt`
+  `(status, reference_next_attempt_at)` for status scans and pending-reference due
+  queries; (004) `Migration20261009001637.ts` adds `outbox_message.event_id`
+  (add nullable → backfill from `id` → `set not null`).
 - **Discipline**: every schema change is an atomic chain — `migration:create` from the
   entity diff → review the generated SQL → `migration:up` against local compose PG →
-  `migration:check` must report no drift (plan T020; the same chain applies to the
-  planned migration 002 in T039 — skip creating an empty migration if there is no
-  delta). Schema changes go through migrations only; do not push entity metadata to
+  `migration:check` must report no drift (plan T020; the same chain applies to
+  every later migration — T039's review correctly reported "No changes required"
+  instead of creating an empty migration). Schema changes go through migrations only; do not push entity metadata to
   the database with schema-update/schema-push tooling.
 - **Trigger ownership**: `src/database/mikro-orm.config.ts` sets
   `schemaGenerator: { ignoreTriggers: true }`. Triggers are owned by migration 001, not
@@ -160,6 +173,14 @@ Local containers (observed names, project = directory name): `backend-challenge-
   boots `AppModule` with a `DATABASE_URL` default. Start the stack first
   (`docker compose up -d --wait`). Treat the local database as disposable — these
   suites insert and delete rows.
+- **Token-based suites (Phase 8)**: the authenticated HTTP suites
+  (`tests/integration/{wallets.http,wagering.http,http-api,auth-observability}.spec.ts`)
+  fetch real Keycloak tokens through `tests/helpers/keycloak-token.ts`
+  (direct grant against `http://localhost:8080/realms/wagering`, client
+  `wagering-cli`, 4 realm users, cached until shortly before expiry) — so
+  Keycloak must be up **with the realm imported**, not just Postgres/LocalStack.
+  `auth-observability.spec.ts` also captures pino output through an in-memory
+  destination to assert log redaction.
 - **Ledger cleanup uses `TRUNCATE TABLE wallet_ledger_entry`**: `DELETE`/`UPDATE` are
   blocked by `trg_wallet_ledger_entry_immutable`, and row triggers do not fire on
   `TRUNCATE` (asserted in `tests/integration/schema.spec.ts`,
@@ -175,6 +196,14 @@ Local containers (observed names, project = directory name): `backend-challenge-
   **357 pass / 0 fail** across 33 files; `bun run test:concurrency` **3 pass / 0 fail**
   (hot-wallet, duplicate-flood, multi-instance); `docker compose ps` →
   postgres / localstack / keycloak `Up (healthy)` (plan Execution Log).
+- **Evidence 2026-10-09** (Phase 8, auth + observability): `bun run validate`
+  exit 0 (run with `$env:GOMEMLIMIT='1200MiB'`); unit **249 pass / 0 fail**;
+  every integration suite green run individually (`auth-observability` 13,
+  `wallets.http` 23, `wagering.http` 23, `http-api` 8, `bootstrap` 6, `metrics` 3,
+  `sqs-ingress` 7, `submit-transaction.use-case` 27, `workers` 4,
+  `outbox-publisher` 2, `pending-reference` 5, `repositories` 10, `schema` 25,
+  `wallets.service` 7); concurrency **3 pass**; Keycloak realm spec **8 pass**;
+  live tokens verified for all 4 realm users.
 - **Gap resolved**: `bun run test:concurrency` now passes — `tests/concurrency/`
   contains `hot-wallet.spec.ts`, `duplicate-flood.spec.ts`, `multi-instance.spec.ts`
   proving correctness under real parallelism (Phase 5).
@@ -190,7 +219,7 @@ Local containers (observed names, project = directory name): `backend-challenge-
 | DI wiring | `src/app.module.ts` (`MikroOrmModule.forRootAsync`) | implemented (Phase 1, extended Phase 3) |
 | Deploy scripts | none | — |
 | Console-managed resources | none known | — |
-| Queue/broker config | spec §10 (`../README.md`) | broker container up; queue creation pending (plan T034) |
+| Queue/broker config | spec §10 (`../README.md`) + `scripts/create-queues.ts` | broker container up; queues created idempotently by `bun run queue:setup` (Phase 6) |
 
 ## Known Constraints and Risks
 
@@ -212,31 +241,37 @@ Local containers (observed names, project = directory name): `backend-challenge-
 - Integration tests hit the real local database — never point them at a shared
   environment.
 
-### Deferred gaps (verified absent — not done yet; item 7 records a Phase 4 decision)
+### Deferred gaps (open items verified absent — items 1, 2, 4, 5, 7 record resolved decisions kept for numbering)
 
-1. **Ledger keyset-pagination index**: `pageByCursor` pages newest-first on
-   `(created_at, id)` per wallet (`src/database/repositories/mikro-orm.repositories.ts`),
-   but migration 001 only creates `idx_ledger_wallet_id (wallet_id, id)` and
-   `idx_ledger_transaction_id (transaction_id)` — no index covers
-   `(wallet_id, created_at, id)` / `(created_at, id)`. Pagination itself shipped in
-   Phase 4 (`GET /wallets/:walletId/ledger`), so the index is now on a hot path —
-   add it via migration 002 (plan T039).
-2. **`PENDING_REFERENCE` recovery index**: `findPendingReferenceDue` filters
-   `status = 'PENDING_REFERENCE'` with `reference_next_attempt_at IS NULL OR <= at`
-   ordered by `(reference_next_attempt_at, created_at)`; `wager_transaction` has no
-   index on those columns (only `idx_wager_tx_wallet_id`,
-   `idx_wager_tx_reference_tx_id`, and the unique/partial-unique indexes). The columns
-   themselves already exist (migration 001).
+1. **Ledger keyset-pagination index — resolved (kept for numbering)**: `pageByCursor`
+   pages newest-first on `(created_at, id)` per wallet
+   (`src/database/repositories/mikro-orm.repositories.ts`); migration 002
+   (`Migration20261008055955_AddLedgerKeysetIndex.ts`) added
+   `idx_ledger_wallet_created_id (wallet_id, created_at, id)`, covering the hot path
+   behind `GET /wallets/:walletId/ledger` (Phase 4).
+2. **`PENDING_REFERENCE` recovery index — resolved (kept for numbering)**:
+   `findPendingReferenceDue` filters `status = 'PENDING_REFERENCE'` with
+   `reference_next_attempt_at IS NULL OR <= at`; migration 003
+   (`Migration20261008124755_AddWagerTransactionStatusIndexes.ts`) added
+   `idx_wager_tx_status` and `idx_wager_tx_status_ref_next_attempt`
+   `(status, reference_next_attempt_at)` (the filter columns). The columns
+   themselves were already in migration 001.
 3. **`DATABASE_URL` vs discrete `DATABASE_*` contract cleanup**: `DATABASE_URL` is
    required by validation but unused by the ORM; discrete vars/defaults do the actual
    connecting. Still open — Phase 4 (2026-10-08) closed without consolidating it;
    do it in a later phase (do not silently drop the required `DATABASE_URL`).
-4. **SQS queues do not exist**: broker is up, but `wager-transactions.fifo` /
-   `wager-transactions-dlq.fifo` are uncreated and `package.json` has no `queue:setup`
-   script (plan T034, Phase 6).
-5. **Workers not wired**: `WORKERS_ENABLED` is validated (default `true`) but no
-   consumer, outbox publisher, or `PENDING_REFERENCE` reprocessor reads it yet
-   (plan T035–T041); health readiness still lacks the SQS probe (T047).
+4. **SQS queues — resolved (Phase 6; kept here for numbering)**: both
+   `wager-transactions.fifo` / `wager-transactions-dlq.fifo` are created by the
+   idempotent `bun run queue:setup` (`scripts/create-queues.ts`, `MAX_RECEIVE_COUNT=5`);
+   re-run it whenever the `localstack-data` volume is recreated
+   (`docker compose down -v`) before the SQS suites.
+5. **Workers + SQS readiness — resolved (Phases 6–8; kept here for numbering)**:
+   `WORKERS_ENABLED` (default `true`) is read by the consumer
+   (`src/messaging/messaging.module.ts`) and both workers
+   (`src/workers/outbox-publisher.worker.ts`, `src/workers/pending-reference.worker.ts`);
+   health readiness now probes PostgreSQL **and** SQS
+   (`{postgres:'ok', sqs:'ok'}`, `src/health/sqs-prober.ts`, T047). Keycloak stays
+   out of readiness (clarifications).
 6. **No foreign-key constraints** — verified against the live DB: `pg_constraint`
    contains only CHECK and PK constraints (no `contype = 'f'`); migration 001 declares
    no `REFERENCES` clauses, while plan T018 describes

@@ -9,9 +9,10 @@ import { WagerTransactionEntity } from '../../src/database/entities/wager-transa
 import { InboxMessageEntity } from '../../src/database/entities/inbox-message.entity';
 import { OutboxMessageEntity } from '../../src/database/entities/outbox-message.entity';
 import { acquireTestLock, releaseTestLock } from '../helpers/test-db-lock';
+import { bearer } from '../helpers/keycloak-token';
 
-// AC ownership note (T029/T029b): this suite exercises the wallets endpoints
-// without tokens — guards arrive in plan T044 (Phase 8).
+// AC ownership note (T029/T029b): every request carries a real Keycloak
+// token (T044/T048); 401/403 behavior is covered by auth-observability.spec.
 
 process.env.DATABASE_URL ??= 'postgres://postgres:local@localhost:5432/wagering';
 process.env.SQS_QUEUE_URL ??= 'http://localhost:4566/000000000000/wager-transactions.fifo';
@@ -26,8 +27,19 @@ interface Truncator {
 describe('wallets HTTP API (T025/T029 wallets section)', () => {
   let baseUrl = '';
   let truncate: Truncator['truncate'] = async () => {};
+  let auth: Record<string, string> = {};
+
+  const authedFetch = (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> =>
+    globalThis.fetch(input, {
+      ...init,
+      headers: { ...((init?.headers ?? {}) as Record<string, string>), ...auth },
+    });
 
   beforeAll(async () => {
+    auth = await bearer('operator');
     await acquireTestLock();
     const { NestFactory } = await import('@nestjs/core');
     const { AppModule } = await import('../../src/app.module');
@@ -62,7 +74,7 @@ describe('wallets HTTP API (T025/T029 wallets section)', () => {
   }, 20_000);
 
   const post = (body: unknown) =>
-    fetch(`${baseUrl}/wallets`, {
+    authedFetch(`${baseUrl}/wallets`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -200,7 +212,7 @@ describe('wallets HTTP API (T025/T029 wallets section)', () => {
   describe('GET /wallets/:walletId', () => {
     it('returns the documented body (AC-20b)', async () => {
       const created = await createWallet('42.00');
-      const res = await fetch(`${baseUrl}/wallets/${created.id}`);
+      const res = await authedFetch(`${baseUrl}/wallets/${created.id}`);
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(Object.keys(body).sort()).toEqual(['balance', 'id', 'playerId', 'version']);
@@ -209,7 +221,7 @@ describe('wallets HTTP API (T025/T029 wallets section)', () => {
     });
 
     it('returns 404 NOT_FOUND for an unknown wallet (AC-20)', async () => {
-      const res = await fetch(`${baseUrl}/wallets/${v4()}`);
+      const res = await authedFetch(`${baseUrl}/wallets/${v4()}`);
       expect(res.status).toBe(404);
       const body = await res.json();
       expect(body.code).toBe('NOT_FOUND');
@@ -217,7 +229,7 @@ describe('wallets HTTP API (T025/T029 wallets section)', () => {
     });
 
     it('returns 400 VALIDATION_ERROR for a malformed walletId (AC-20a)', async () => {
-      const res = await fetch(`${baseUrl}/wallets/not-a-uuid`);
+      const res = await authedFetch(`${baseUrl}/wallets/not-a-uuid`);
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.code).toBe('VALIDATION_ERROR');
@@ -229,7 +241,7 @@ describe('wallets HTTP API (T025/T029 wallets section)', () => {
       const wallet = await createWallet('1000.00');
       await seedLedger(wallet.id, 4);
 
-      const p1 = await fetch(`${baseUrl}/wallets/${wallet.id}/ledger?limit=2`);
+      const p1 = await authedFetch(`${baseUrl}/wallets/${wallet.id}/ledger?limit=2`);
       expect(p1.status).toBe(200);
       const page1 = await p1.json();
       expect(Object.keys(page1).sort()).toEqual(['entries', 'nextCursor']);
@@ -245,7 +257,7 @@ describe('wallets HTTP API (T025/T029 wallets section)', () => {
         'transactionId',
       ]);
 
-      const p2 = await fetch(
+      const p2 = await authedFetch(
         `${baseUrl}/wallets/${wallet.id}/ledger?limit=2&cursor=${encodeURIComponent(page1.nextCursor)}`,
       );
       expect(p2.status).toBe(200);
@@ -253,7 +265,7 @@ describe('wallets HTTP API (T025/T029 wallets section)', () => {
       expect(page2.entries).toHaveLength(2);
       expect(page2.nextCursor).toBeTypeOf('string');
 
-      const p3 = await fetch(
+      const p3 = await authedFetch(
         `${baseUrl}/wallets/${wallet.id}/ledger?limit=2&cursor=${encodeURIComponent(page2.nextCursor)}`,
       );
       expect(p3.status).toBe(200);
@@ -271,10 +283,10 @@ describe('wallets HTTP API (T025/T029 wallets section)', () => {
       const wallet = await createWallet('1000.00');
       await seedLedger(wallet.id, 4);
 
-      const p1 = await fetch(`${baseUrl}/wallets/${wallet.id}/ledger?limit=2`);
+      const p1 = await authedFetch(`${baseUrl}/wallets/${wallet.id}/ledger?limit=2`);
       const page1 = await p1.json();
       await seedLedger(wallet.id, 1);
-      const p2 = await fetch(
+      const p2 = await authedFetch(
         `${baseUrl}/wallets/${wallet.id}/ledger?limit=2&cursor=${encodeURIComponent(page1.nextCursor)}`,
       );
       const page2 = await p2.json();
@@ -287,7 +299,7 @@ describe('wallets HTTP API (T025/T029 wallets section)', () => {
 
     it('returns an empty envelope for a wallet with no ledger entries (AC-15)', async () => {
       const wallet = await createWallet('0.00');
-      const res = await fetch(`${baseUrl}/wallets/${wallet.id}/ledger`);
+      const res = await authedFetch(`${baseUrl}/wallets/${wallet.id}/ledger`);
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ entries: [], nextCursor: null });
     });
@@ -295,7 +307,7 @@ describe('wallets HTTP API (T025/T029 wallets section)', () => {
     it('rejects out-of-bounds and non-numeric limits (AC-21a)', async () => {
       const wallet = await createWallet('1000.00');
       for (const limit of ['0', '101', '-1', 'abc']) {
-        const res = await fetch(`${baseUrl}/wallets/${wallet.id}/ledger?limit=${limit}`);
+        const res = await authedFetch(`${baseUrl}/wallets/${wallet.id}/ledger?limit=${limit}`);
         expect(res.status).toBe(400);
         const body = await res.json();
         expect(body.code).toBe('VALIDATION_ERROR');
@@ -304,7 +316,7 @@ describe('wallets HTTP API (T025/T029 wallets section)', () => {
 
     it('rejects an undecodable cursor (AC-21a)', async () => {
       const wallet = await createWallet('1000.00');
-      const res = await fetch(`${baseUrl}/wallets/${wallet.id}/ledger?cursor=!!!garbage!!!`);
+      const res = await authedFetch(`${baseUrl}/wallets/${wallet.id}/ledger?cursor=!!!garbage!!!`);
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.code).toBe('VALIDATION_ERROR');
@@ -312,7 +324,7 @@ describe('wallets HTTP API (T025/T029 wallets section)', () => {
     });
 
     it('returns 404 for an unknown wallet (AC-20)', async () => {
-      const res = await fetch(`${baseUrl}/wallets/${v4()}/ledger`);
+      const res = await authedFetch(`${baseUrl}/wallets/${v4()}/ledger`);
       expect(res.status).toBe(404);
       expect((await res.json()).code).toBe('NOT_FOUND');
     });
@@ -320,7 +332,7 @@ describe('wallets HTTP API (T025/T029 wallets section)', () => {
 
   describe('POST /wallets/:walletId/reconciliation (AC-17)', () => {
     const reconcile = (walletId: string) =>
-      fetch(`${baseUrl}/wallets/${walletId}/reconciliation`, { method: 'POST' });
+      authedFetch(`${baseUrl}/wallets/${walletId}/reconciliation`, { method: 'POST' });
 
     it('reports a consistent wallet with the documented body', async () => {
       const wallet = await createWallet('1000.00');
@@ -383,10 +395,11 @@ describe('wallets HTTP API (T025/T029 wallets section)', () => {
       expect(body.calculatedBalance).toEqual({ amount: '1010.00', currency: 'BRL' });
       expect(body.checkedEntries).toBe(2);
       expect(metrics.reconciliationDivergence.count).toBe(before + 1);
-      expect(warnings.length).toBeGreaterThan(0);
-      expect(String(warnings[0]![0])).toContain('divergence');
+      expect(
+        warnings.some((entry) => String(entry[0]).toLowerCase().includes('divergence')),
+      ).toBe(true);
 
-      const after = await fetch(`${baseUrl}/wallets/${wallet.id}`);
+      const after = await authedFetch(`${baseUrl}/wallets/${wallet.id}`);
       expect((await after.json()).balance).toEqual({ amount: '1000.00', currency: 'BRL' });
     });
 

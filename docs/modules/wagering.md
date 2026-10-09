@@ -3,7 +3,7 @@ module: wagering
 title: Wagering Module
 repo: backend
 path: src/modules/wagering/
-last_updated: 2026-10-08
+last_updated: 2026-10-09
 entities:
   - WagerTransaction
   - Wallet
@@ -37,6 +37,8 @@ and exposes read endpoints for transaction status polling.
 - `src/modules/wagering/dto/transaction-response.dto.ts`
 - Error contract: `src/common/http/exception.filter.ts` (global)
 - Validation contract: `src/app.module.ts` (global `ValidationPipe`)
+- Auth (global, Phase 8): `src/auth/jwt.guard.ts`, `src/auth/roles.guard.ts`,
+  `src/auth/roles.decorator.ts`, `src/auth/public.decorator.ts`
 - `src/common/idempotency/payload-hash.ts` (canonical JSON + SHA-256)
 - Domain: `src/domain/wager-transaction/wager-transaction.ts`, `src/domain/wallet/wallet.ts`,
   `src/domain/failure-codes.ts`, `src/domain/errors.ts`
@@ -47,21 +49,27 @@ and exposes read endpoints for transaction status polling.
 - 3 endpoints: `POST /wagering/transactions`, `GET /wagering/transactions/:transactionId`,
   `GET /providers/:providerId/wagering/transactions/:externalTransactionId`.
 - `SubmitTransactionUseCase.execute(cmd)` is ingress-agnostic:
-  `ingress: { kind: 'http' } | { kind: 'sqs', messageId, consumerName }`. The **SQS
-  consumer does not exist yet (Phase 6)** — only HTTP ingress is wired today; the inbox
-  dedup step for SQS ingress is implemented and covered by tests.
+  `ingress: { kind: 'http' } | { kind: 'sqs', messageId, consumerName }`. The SQS
+  consumer `src/messaging/wager-transaction.consumer.ts` (Phase 6) feeds it from
+  `wager-transactions.fifo`; the inbox dedup step for SQS ingress is implemented
+  and covered by tests.
 - All DB access happens in explicit `em.transactional` blocks on the injected root
   `EntityManager`; repositories (`MikroOrmWalletRepository`,
   `MikroOrmWagerTransactionRepository`, `MikroOrmWalletLedgerEntryRepository`,
   `MikroOrmOutboxMessageRepository`, `MikroOrmInboxMessageRepository`) are constructed
   **inside each transaction**; `allowGlobalContext: false`. Read endpoints run in short
   transactions too (pinned decision).
-- **No auth today** — Phase 4 runs without tokens; guards are **T044 (Phase 8)**; metrics
-  include the in-process `CounterStub`/`HistogramStub` for **lock conflicts and
-  transaction outcomes** (`src/common/metrics/metrics.ts` — Phase 5, T033) plus the
-  reconciliation divergence counter; Prometheus instruments and `GET /metrics` are
-  **T046 / Phase 8**; the SQS consumer is **T034–T037 / Phase 6**; the pending-reference
-  worker is **T040 / Phase 7**.
+- **Auth enforced since Phase 8 (T044)** — global `JwtGuard` + `RolesGuard`
+  (`APP_GUARD` in `src/app.module.ts`); roles: **`transact:write` on the POST,
+  `transact:read` on the GETs** (`@Roles` in `wagering.controller.ts`), with
+  `401 UNAUTHORIZED` / `403 ROLE_FORBIDDEN` asserted in
+  `tests/integration/auth-observability.spec.ts` and the HTTP suites sending real
+  Keycloak tokens (`tests/helpers/keycloak-token.ts`). Metrics are Prometheus
+  instruments in `src/observability/metrics.service.ts` (re-exported by
+  `src/common/metrics/metrics.ts`) served at `GET /metrics` — **T046 done**;
+  pino structured logging + correlation middleware landed in **T045**; the SQS
+  consumer is **Phase 6** (`src/messaging/`); the pending-reference worker is
+  **Phase 7** (`src/workers/`).
 - `Idempotency-Key` header is validated in the controller **before any DB write**.
 - **Lock-conflict instrumentation** (Phase 5, T033): `metrics.wageringLockConflictsTotal`
   increments when `findByIdForUpdate` wait exceeds 50ms; `metrics.wageringTxTotal`
@@ -85,9 +93,12 @@ and exposes read endpoints for transaction status polling.
 
 ## Public API
 
-**Auth note:** no guard on any endpoint today (no `JwtAuthGuard`; guards arrive with
-**T044 / Phase 8**, plus T043 roles: `transact:write` on POST, `transact:read` on GET).
-`401 UNAUTHORIZED` / `403 ROLE_FORBIDDEN` are contract-reserved only.
+**Auth note:** guarded by the **global** `JwtGuard` + `RolesGuard` (`src/auth/`,
+registered in `src/app.module.ts`); the controller only declares `@Roles` —
+`transact:write` on `POST /wagering/transactions`, `transact:read` on both GETs.
+Missing/invalid token ⇒ `401 UNAUTHORIZED`, missing realm role ⇒
+`403 ROLE_FORBIDDEN` (fail-closed; see `tests/integration/auth-observability.spec.ts`).
+The token carries no `providerId`, so the by-UUID read stays unscoped (Deferred).
 
 ### Use-case entry point (the real public surface)
 
@@ -119,9 +130,9 @@ interface SubmitTransactionResult {
 
 | Method | Path | Auth | Success | Description |
 |--------|------|------|---------|-------------|
-| `POST` | `/wagering/transactions` | none (Phase 4) + **required `Idempotency-Key` header** | `200` / `202` | Submit a transaction |
-| `GET` | `/wagering/transactions/:transactionId` | none (Phase 4) | `200` | Status lookup by internal id |
-| `GET` | `/providers/:providerId/wagering/transactions/:externalTransactionId` | none (Phase 4) | `200` | Provider-scoped lookup |
+| `POST` | `/wagering/transactions` | `transact:write` + **required `Idempotency-Key` header** | `200` / `202` | Submit a transaction |
+| `GET` | `/wagering/transactions/:transactionId` | `transact:read` | `200` | Status lookup by internal id |
+| `GET` | `/providers/:providerId/wagering/transactions/:externalTransactionId` | `transact:read` | `200` | Provider-scoped lookup |
 
 #### `POST /wagering/transactions`
 
@@ -316,8 +327,8 @@ provider-scoped** — see Deferred) + `uq_wager_tx_provider_external`.
 | Malformed `:transactionId` | `400` | `VALIDATION_ERROR` | `ParseUUIDPipe` |
 | Transient infra (PG/SQS unreachable, `ECONNREFUSED`, timeouts) | `503` | `SERVICE_UNAVAILABLE` + `failureCode: INFRASTRUCTURE_ERROR` + `Retry-After: 5` | safe to retry with the same key |
 | Unexpected error | `500` | `INTERNAL_ERROR` | message masked, `errors` dropped |
-| (Reserved) missing/invalid token or JWKS failure | `401` | `UNAUTHORIZED` | only after T044 (Phase 8) |
-| (Reserved) valid token, missing role | `403` | `ROLE_FORBIDDEN` | only after T044 (Phase 8) |
+| Missing/invalid token or JWKS failure | `401` | `UNAUTHORIZED` | global `JwtGuard` (`src/auth/jwt.guard.ts`), fail-closed — since T044 (Phase 8) |
+| Valid token, missing realm role | `403` | `ROLE_FORBIDDEN` | global `RolesGuard` (`src/auth/roles.guard.ts`), fail-closed — since T044 (Phase 8) |
 
 Domain errors reaching the filter map as: `ValidationError → 400`,
 `IdempotencyConflictError → 409`, `NotFoundError → 404` (no failureCode),
@@ -327,8 +338,8 @@ Domain errors reaching the filter map as: `ValidationError → 400`,
 ## Events
 
 Enqueued as `outbox_message` rows in the **same SQL transaction** as the state change
-(Transactional Outbox; publication to `wager-transactions.fifo` is **Phase 7 / T038**,
-at-least-once):
+(Transactional Outbox; published to `wager-transactions.fifo` since Phase 7 by
+`src/workers/outbox-publisher.worker.ts`, at-least-once):
 
 | Event (`eventType`, version 1) | When | Aggregate / key payload |
 |---|---|---|
@@ -343,11 +354,14 @@ repo).
 
 ## External Integrations
 
-- **None active.** The use case accepts an `ingress.kind: 'sqs'` command shape and the
-  inbox table/dedup step exist, but **no SQS client/consumer is wired yet** — that is
-  Phase 6 (T034–T037: `sqs.client.ts`, `wager-transaction.consumer.ts`,
-  `messaging.module.ts`). AWS SDK (`@aws-sdk/client-sqs`) is a declared dependency but
-  unused by this module today.
+- **No direct external calls from this module.** The use case accepts an
+  `ingress.kind: 'sqs'` command shape and the inbox table/dedup step live here, but
+  the SQS plumbing belongs to `src/messaging/` (Phase 6: `sqs.client.ts`,
+  `wager-transaction.consumer.ts`, `messaging.module.ts`), outbound events go
+  through `src/workers/outbox-publisher.worker.ts` (Phase 7), and HTTP callers
+  authenticate via Keycloak (`src/auth/`, Phase 8). The AWS SDK
+  (`@aws-sdk/client-sqs`) is a declared dependency but remains unused *inside this
+  module*.
 
 ## Dependencies
 
@@ -356,8 +370,11 @@ repo).
 **Providers:** `SubmitTransactionUseCase`, `WageringService`; **Controller:**
 `WageringController`.
 
-**Exports:** none — the future SQS consumer (Phase 6) and reference worker (Phase 7) will
-resolve `SubmitTransactionUseCase` from this module once registered accordingly.
+**Exports:** `SubmitTransactionUseCase` — since Phase 6,
+`MessagingModule` (`src/messaging/messaging.module.ts`) imports this module and
+hands the use case to the SQS consumer. The Phase 7 workers (`src/workers/`) do
+**not** import this module; they work through `src/database/repositories/`
+directly.
 
 **Implicit/global dependencies:** MikroORM root wiring (`AppModule`), global
 `ValidationPipe` + `HttpExceptionFilter`, `MoneyDto`, `payloadHash`, `isUniqueViolation`,
@@ -371,16 +388,17 @@ wallets by constructing `WalletsService` with an EM directly.
 
 | File | What it proves |
 |---|---|
-| `tests/integration/submit-transaction.use-case.spec.ts` (23 tests) | The core flow against real PG. **Cycle A (happy path):** BET debits + ledger + `result_balance` + `payload_hash` + `WagerTransactionProcessed` **and** `WalletBalanceChanged` with `walletVersion 2`; WIN credits; LOSS processes with **no** balance change, **no** ledger entry, **no** `WalletBalanceChanged` but still `WagerTransactionProcessed`; unique provider/external/idempotency fields stored. **Cycle B (stored rejections):** `INSUFFICIENT_FUNDS` → `REJECTED` row, no effects, rejected event only; `CURRENCY_MISMATCH` even for a non-moving kind (snapshot keeps wallet currency); `WALLET_NOT_FOUND` with **null** `result_balance` + rejected event. **Cycle C (references):** REFUND of BET credits and links `reference_transaction_id`; second same-type REFUND ⇒ `REFERENCE_ALREADY_REVERSED`; mixed-type ROLLBACK after REFUND allowed; second ROLLBACK rejected; REFUND of WIN ⇒ `REFERENCE_INVALID_KIND`; absent reference ⇒ `PENDING_REFERENCE` row + snapshot + `WagerTransactionPendingReference` (no ledger change); cross-round reference ⇒ `REFERENCE_MISMATCH`; reversal debiting past zero ⇒ `REVERSAL_EXCEEDS_BALANCE` with no entry; forced same-reference race (protocol-patched `findAppliedReversal`) ⇒ `ReferenceResolutionError` not 500 (IM-3). **Cycle D (idempotency):** replay of success/rejection/pending with original balance and **zero** new effects (version/ledger/row counts asserted); same key + different payload ⇒ `IdempotencyConflictError`; forced G1 race (patched `findByIdempotencyKey`) resolves to a replay with one row and one debit; SQS-ingress duplicate `messageId` dedups via exactly one `inbox_message` row; external id reused under another key ⇒ `IdempotencyConflictError` (CR-5). |
-| `tests/integration/wagering.http.spec.ts` (21 tests) | HTTP contract of submit + lookups, tokenless (T027). `200` §9 body for BET; missing / empty / whitespace `Idempotency-Key` ⇒ 400 **and zero new rows** (AC-19); `kind: OPENING` ⇒ 400 (AC-18 HTTP); every invalid field aggregated in `errors[]` with non-empty constraints (AC-24); missing `money` ⇒ 400 not 500 (CR-1); missing reference for `REFUND`/`ROLLBACK` ⇒ 400; 300-char `providerId` ⇒ 400 (IM-6); comma-bearing key ⇒ 400 (CR-6); external id under a different key ⇒ 409 with no extra row (CR-5); unknown payload fields ⇒ 400; `422` pinned body (`code/status/failureCode/transactionId/idempotentReplay`, no `balance`) (G14, AC-5a); replay of success ⇒ `idempotentReplay: true` + original balance; same key + different payload ⇒ 409; replay of rejection ⇒ byte-identical 422 with `idempotentReplay: true`; `202` pending with exactly 3 keys and its replay (AC-25, G5); GET by id for `PROCESSED` / `REJECTED` (failureCode + balance) / `PENDING_REFERENCE` (no balance) bodies (AC-28); unknown id 404 / malformed 400; provider-scoped lookup resolves own provider and 404s a foreign provider (AC-20). |
+| `tests/integration/submit-transaction.use-case.spec.ts` (27 tests) | The core flow against real PG. **Cycle A (happy path):** BET debits + ledger + `result_balance` + `payload_hash` + `WagerTransactionProcessed` **and** `WalletBalanceChanged` with `walletVersion 2`; WIN credits; LOSS processes with **no** balance change, **no** ledger entry, **no** `WalletBalanceChanged` but still `WagerTransactionProcessed`; unique provider/external/idempotency fields stored. **Cycle B (stored rejections):** `INSUFFICIENT_FUNDS` → `REJECTED` row, no effects, rejected event only; `CURRENCY_MISMATCH` even for a non-moving kind (snapshot keeps wallet currency); `WALLET_NOT_FOUND` with **null** `result_balance` + rejected event. **Cycle C (references):** REFUND of BET credits and links `reference_transaction_id`; second same-type REFUND ⇒ `REFERENCE_ALREADY_REVERSED`; mixed-type ROLLBACK after REFUND allowed; second ROLLBACK rejected; REFUND of WIN ⇒ `REFERENCE_INVALID_KIND`; absent reference ⇒ `PENDING_REFERENCE` row + snapshot + `WagerTransactionPendingReference` (no ledger change); cross-round reference ⇒ `REFERENCE_MISMATCH`; reversal debiting past zero ⇒ `REVERSAL_EXCEEDS_BALANCE` with no entry; forced same-reference race (protocol-patched `findAppliedReversal`) ⇒ `ReferenceResolutionError` not 500 (IM-3). **Cycle D (idempotency):** replay of success/rejection/pending with original balance and **zero** new effects (version/ledger/row counts asserted); same key + different payload ⇒ `IdempotencyConflictError`; forced G1 race (patched `findByIdempotencyKey`) resolves to a replay with one row and one debit; SQS-ingress duplicate `messageId` dedups via exactly one `inbox_message` row; external id reused under another key ⇒ `IdempotencyConflictError` (CR-5); T046
+asserts that an idempotent replay increments `wagering_duplicates_total`. |
+| `tests/integration/wagering.http.spec.ts` (23 tests) | HTTP contract of submit + lookups, authenticated with operator bearer tokens since T048 (`tests/helpers/keycloak-token.ts`). `200` §9 body for BET; missing / empty / whitespace `Idempotency-Key` ⇒ 400 **and zero new rows** (AC-19); `kind: OPENING` ⇒ 400 (AC-18 HTTP); every invalid field aggregated in `errors[]` with non-empty constraints (AC-24); missing `money` ⇒ 400 not 500 (CR-1); missing reference for `REFUND`/`ROLLBACK` ⇒ 400; 300-char `providerId` ⇒ 400 (IM-6); comma-bearing key ⇒ 400 (CR-6); external id under a different key ⇒ 409 with no extra row (CR-5); unknown payload fields ⇒ 400; `422` pinned body (`code/status/failureCode/transactionId/idempotentReplay`, no `balance`) (G14, AC-5a); replay of success ⇒ `idempotentReplay: true` + original balance; same key + different payload ⇒ 409; replay of rejection ⇒ byte-identical 422 with `idempotentReplay: true`; `202` pending with exactly 3 keys and its replay (AC-25, G5); GET by id for `PROCESSED` / `REJECTED` (failureCode + balance) / `PENDING_REFERENCE` (no balance) bodies (AC-28); unknown id 404 / malformed 400; provider-scoped lookup resolves own provider and 404s a foreign provider (AC-20). |
 | `tests/integration/http-api.spec.ts` (8 e2e scenarios) | The full §9 walk over real PG (T029): wallet lifecycle (create `version 1` → duplicate 409 → other currency 201); `BET/WIN/LOSS` balance + direction arithmetic and ledger contents; insufficient funds ⇒ 422 with unchanged balance/ledger; idempotent replay with original balance + 409 conflict (AC-5); refund once / second refund 422 `REFERENCE_ALREADY_REVERSED` / mixed ROLLBACK allowed / second ROLLBACK 422 (AC-8); cross-currency submit ⇒ 422 `CURRENCY_MISMATCH`, no effects, read-back keeps **wallet** currency (CR-2); `OPENING` externally ⇒ 400 (AC-18) and reconciliation consistent (AC-17); `limit=1` ledger walk with no duplicates/skips and newest-first order (AC-21). |
-| `tests/integration/bootstrap.spec.ts` (5) | Global pipe/filter wiring and the generic `404 NOT_FOUND` contract this module's lookups rely on. |
+| `tests/integration/bootstrap.spec.ts` (6) | Global pipe/filter wiring, the generic `404 NOT_FOUND` contract this module's lookups rely on, plus the correlation-id middleware (T045) and readiness `{postgres, sqs}` body (T047). |
 | `tests/unit/common/http/exception.filter.spec.ts` (38) | The pinned error contract end-to-end: domain→status mapping (`ValidationError→400`, `IdempotencyConflictError→409`, `WalletExistsError→409`, `NotFoundError→404` w/o failureCode, business reject→422 + failureCode), 422 passthrough of `transactionId`/`idempotentReplay`, `Retry-After` + `INFRASTRUCTURE_ERROR` on 503, 500 masking, correlation-id validation, header-safe logging. |
 | `tests/concurrency/hot-wallet.spec.ts` (1) | Hot-wallet contention: seed wallet `100.00`; `Promise.all` two `POST /wagering/transactions` bets of `80.00` (distinct idempotency keys); assert one `PROCESSED`, one `REJECTED INSUFFICIENT_FUNDS`, balance `20.00`, exactly one `DEBIT` row in ledger (AC-11). |
 | `tests/concurrency/duplicate-flood.spec.ts` (1) | 50× duplicate flood: same idempotency key + payload fired 50× in parallel → exactly one stored transaction, one debit, all responses consistent (`idempotentReplay: true` on ≥49) (AC-12). |
 | `tests/concurrency/multi-instance.spec.ts` (1) | Multi-instance: 3 logical app instances (spawned via test helper on ports 3001–3003, same DB/queues); mixed workload across shared + distinct wallets; final invariant check: for every wallet `balance == Σledger` and no duplicate debit per transaction. |
 
-Supporting (shared): `tests/integration/schema.spec.ts` (24) proves the DB constraints
+Supporting (shared): `tests/integration/schema.spec.ts` (25) proves the DB constraints
 this module depends on — unique idempotency key, unique provider+external, partial
 `uq_wager_tx_reference_kind` (rejects second same-kind reversal, accepts mixed kinds),
 non-negative balance CHECK, ledger immutability trigger.
@@ -389,38 +407,50 @@ non-negative balance CHECK, ledger immutability trigger.
 
 **Planned — explicitly not implemented today:**
 
-- **Auth (T044, Phase 8):** no JWT/roles guards; all three endpoints unauthenticated;
-  `401`/`403` contract codes are reserved but unreachable. Test suites document this
-  ("Phase 4 runs without tokens").
-- **Metrics / observability (T046, Phase 8):** `wageringLockConflictsTotal`,
-  `wageringTxTotal{processed,rejected,pendingReference}`, and
-  `wageringProcessingSeconds` are implemented as in-process `CounterStub`/`HistogramStub`
-  in `src/common/metrics/metrics.ts` (Phase 5, T033) and instrumented in
-  `SubmitTransactionUseCase`; Prometheus instruments and `GET /metrics` arrive with
-  T046; no pino structured logging yet (T045).
-- **SQS consumer (T034–T037, Phase 6):** the use case supports `ingress.kind: 'sqs'`
-  with inbox dedup (tested at unit level), but no consumer, no queue bootstrap script, no
-  DLQ handling, no ack-after-commit/SIGTERM lifecycle.
-- **Workers (Phase 7):** outbox publisher (T038) — outbox rows accumulate unpublished
-  today; pending-reference worker (T040) — `PENDING_REFERENCE` rows written by this
-  module are **never resolved or exhausted** until it lands (`reference_attempts`/
-  `reference_next_attempt_at` columns exist from migration 001 but are unused here).
+- **Auth residual gap (the guards themselves — T044 — are live):** the Phase 8
+  tokens carry no `providerId`, so `GET /wagering/transactions/:transactionId`
+  stays readable by any `transact:read` holder who knows the UUID; `401`/`403` are
+  live paths asserted in `tests/integration/auth-observability.spec.ts` (the HTTP
+  suites now send operator bearer tokens).
+- **Metrics / observability (T045/T046, Phase 8 — completed):**
+  `wageringLockConflictsTotal`, `wageringTxTotal{processed,rejected,pendingReference}`,
+  `wageringProcessingSeconds`, `wageringDuplicatesTotal`,
+  `wageringSqsRetriesTotal`, `wageringDlqReceivedTotal`, `wagering_outbox_lag`
+  and `wagering_reconciliation_divergences_total` are `prom-client` instruments in
+  `src/observability/metrics.service.ts` (re-exported by
+  `src/common/metrics/metrics.ts`, so call sites are unchanged), rendered at
+  `GET /metrics`; pino logging + correlation middleware (T045) are wired in
+  `src/main.ts` / `src/observability/`.
+- **SQS consumer (T034–T037, Phase 6 — completed):** `src/messaging/` provides
+  `sqs.client.ts`, `wager-transaction.consumer.ts`, `messaging.module.ts`, the
+  idempotent `bun run queue:setup` script, DLQ forwarding, and
+  ack-after-commit / SIGTERM drain behavior; the consumer invokes
+  `SubmitTransactionUseCase.execute` with `ingress.kind: 'sqs'` (inbox dedup as
+  step 1) — covered by `tests/integration/sqs-ingress.spec.ts`.
+- **Workers (Phase 7 — completed):** outbox publisher
+  (`src/workers/outbox-publisher.worker.ts`, T038) publishes outbox rows
+  post-commit; the pending-reference worker (`src/workers/pending-reference.worker.ts`,
+  T040) resolves or exhausts `PENDING_REFERENCE` rows with backoff/TTL
+  (`reference_attempts` / `reference_next_attempt_at` from migration 001).
 - **Concurrency suites (T030–T032, Phase 5):** **completed** — hot-wallet
   (`tests/concurrency/hot-wallet.spec.ts`), 50× duplicate-flood
   (`tests/concurrency/duplicate-flood.spec.ts`), and 3-instance
   (`tests/concurrency/multi-instance.spec.ts`) tests exist and pass; the `FOR UPDATE` +
   unique-constraint guarantees are proven under real parallelism.
-- **Idempotency-key scoping migration `(provider_id, key)` (deferred; revisit with T039
-  review / Phase 8):** today `uq_wager_tx_idempotency_key` is global, so one provider
-  could squat another's key; requires tokens that bind `providerId` first.
-- **Provider-scoping of `GET /wagering/transactions/:transactionId` (deferred; Phase 8):**
-  any caller holding the UUID can read it — open question for the guard design.
-- **Performance (deferred; candidates with T039 / Phase 7):** ~11 SQL round trips inside
+- **Idempotency-key scoping migration `(provider_id, key)` (deferred; revisit with
+  T039 review):** today `uq_wager_tx_idempotency_key` is global, so one provider
+  could squat another's key; requires tokens that bind `providerId` — Phase 8
+  landed (T043/T044) **without** a provider claim, so this stays blocked.
+- **Provider-scoping of `GET /wagering/transactions/:transactionId` (deferred):**
+  any `transact:read` caller holding the UUID can read it — the Phase 8 guard
+  design deliberately checked roles only; still an open question.
+- **Performance (deferred; candidates from the completed T039 review):** ~11 SQL round trips inside
   the `FOR UPDATE` window (each `save()` = `findOne` + `flush`) → single-flush
   optimization; `pageByCursor` `$or` → row-value predicate.
-- **Structural refactor (deferred):** `submit-transaction.use-case.ts` (~460 lines)
+- **Structural refactor (deferred; now unblocked):** `submit-transaction.use-case.ts` (~460 lines)
   duplicates the idempotency/external lookup logic between `runInTx` and
-  `resolveDuplicate` — refactor after Phase 7 workers land.
+  `resolveDuplicate` — was to happen after Phase 7 workers land; Phases 6–7 are
+  complete, so nothing blocks it now.
 
 ## Safe Change Checklist for Future AI Work
 
@@ -443,11 +473,14 @@ non-negative balance CHECK, ledger immutability trigger.
    `uq_wager_tx_reference_kind` — schema changes go through the MikroORM migration
    atomic chain (`bun run mikro-orm migration:create` → drift check → run locally),
    never hand-written SQL files.
-6. When adding the SQS consumer (Phase 6), call `SubmitTransactionUseCase.execute` with
+6. The SQS consumer (`src/messaging/wager-transaction.consumer.ts`, Phase 6) must keep
+   calling `SubmitTransactionUseCase.execute` with
    `ingress: { kind: 'sqs', messageId, consumerName }` and delete the message only after
    commit — do not fork the business logic; keep inbox dedup as step 1.
 7. Do not introduce a global EM or repository singleton (`allowGlobalContext: false`);
    keep repositories constructed inside `em.transactional`.
 8. Verify with `bun run validate` (`tsc --noEmit`), then `bun test` (integration suites
-   need the compose stack: PostgreSQL + LocalStack + Keycloak up). Current baseline:
-   353 passing tests / 0 failing.
+   need the full compose stack: PostgreSQL + LocalStack + Keycloak **with the
+   `wagering` realm imported** — token suites fetch real JWTs). Baseline
+   2026-10-09 (Phase 8): `bun run validate` exit 0; unit 249 pass / 0 fail; all
+   integration suites green run individually; concurrency 3 pass / 0 fail.

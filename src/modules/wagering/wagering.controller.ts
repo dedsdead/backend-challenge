@@ -16,6 +16,7 @@ import { WageringService } from './wagering.service';
 import { SubmitTransactionDto } from './dto/submit-transaction.dto';
 import { TransactionResponseDto } from './dto/transaction-response.dto';
 import { WagerTransactionKind, WagerTransactionStatus } from '../../domain/enums';
+import { Roles } from '../../auth/roles.decorator';
 
 const KEY_SHAPE_RE = /^\S(?:.*\S)?$/;
 
@@ -55,6 +56,7 @@ export class WageringController {
   ) {}
 
   @Post('wagering/transactions')
+  @Roles('transact:write')
   async submit(
     @Headers('idempotency-key') idempotencyKey: string | undefined,
     @Body() dto: SubmitTransactionDto,
@@ -109,6 +111,7 @@ export class WageringController {
   }
 
   @Get('wagering/transactions/:transactionId')
+  @Roles('transact:read')
   async getByTransactionId(
     @Param('transactionId', ParseUUIDPipe) transactionId: string,
   ): Promise<TransactionResponseDto> {
@@ -116,6 +119,7 @@ export class WageringController {
   }
 
   @Get('providers/:providerId/wagering/transactions/:externalTransactionId')
+  @Roles('transact:read')
   async getByProviderExternal(
     @Param('providerId') providerId: string,
     @Param('externalTransactionId') externalTransactionId: string,

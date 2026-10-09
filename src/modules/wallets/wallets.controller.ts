@@ -17,6 +17,7 @@ import { LedgerPageResponseDto } from './dto/ledger-page-response.dto';
 import { ReconciliationResponseDto } from './dto/reconciliation-response.dto';
 import { ReconciliationService } from './reconciliation.service';
 import { decodeLedgerCursor } from './ledger-cursor.codec';
+import { Roles } from '../../auth/roles.decorator';
 
 @Controller('wallets')
 export class WalletsController {
@@ -26,6 +27,7 @@ export class WalletsController {
   ) {}
 
   @Post()
+  @Roles('transact:write')
   async create(@Body() dto: CreateWalletDto): Promise<WalletResponseDto> {
     const wallet = await this.wallets.create({
       playerId: dto.playerId,
@@ -38,6 +40,7 @@ export class WalletsController {
   }
 
   @Get(':walletId')
+  @Roles('transact:read')
   async get(
     @Param('walletId', ParseUUIDPipe) walletId: string,
   ): Promise<WalletResponseDto> {
@@ -45,6 +48,7 @@ export class WalletsController {
   }
 
   @Get(':walletId/ledger')
+  @Roles('transact:read')
   async ledger(
     @Param('walletId', ParseUUIDPipe) walletId: string,
     @Query() query: LedgerQueryDto,
@@ -57,6 +61,7 @@ export class WalletsController {
   }
 
   @Post(':walletId/reconciliation')
+  @Roles('transact:write')
   @HttpCode(HttpStatus.OK)
   async reconcile(
     @Param('walletId', ParseUUIDPipe) walletId: string,

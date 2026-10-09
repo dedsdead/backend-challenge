@@ -94,10 +94,28 @@ describe('bootstrap (AppModule)', () => {
     expect(await res.json()).toEqual({ status: 'ok' });
   });
 
-  it('GET /health/ready returns 200 {postgres:ok}', async () => {
+  it('assigns a correlation id and echoes it back (T045)', async () => {
+    const res = await fetch(`${baseUrl}/health/live`);
+    const generated = res.headers.get('x-correlation-id');
+    expect(generated).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+
+    const echoed = await fetch(`${baseUrl}/health/live`, {
+      headers: { 'x-correlation-id': 'client-cid.42' },
+    });
+    expect(echoed.headers.get('x-correlation-id')).toBe('client-cid.42');
+
+    const malformed = await fetch(`${baseUrl}/health/live`, {
+      headers: { 'x-correlation-id': 'x'.repeat(200) },
+    });
+    expect(malformed.headers.get('x-correlation-id')).not.toBe('x'.repeat(200));
+  });
+
+  it('GET /health/ready returns 200 {postgres:ok, sqs:ok} (T047)', async () => {
     const res = await fetch(`${baseUrl}/health/ready`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ postgres: 'ok' });
+    expect(await res.json()).toEqual({ postgres: 'ok', sqs: 'ok' });
   });
 
   it('GET /unknown returns 404 with the Phase 4 error contract', async () => {
