@@ -87,7 +87,7 @@ user, or when a token "suddenly" comes back without a claim the guards need.
     "audience-wagering-api"]` — this is the client the test helper authenticates against
     (plan deviation: a bearer-only client cannot do the direct grant, so local token
     acquisition lives on a second client)
-- **Users** (all `enabled`, password `wagering-dev-123` `temporary: false`):
+- **Users** (all `enabled`, password from `KEYCLOAK_TEST_PASSWORD` env var `temporary: false`):
   `provider-client` `[transact:read, transact:write]`, `operator` `[read, write]`,
   `read-only-client` `[read]`, `write-only-client` `[write]` — the two single-role users
   exist so both 403 directions can be proven (`tests/integration/auth-observability.spec.ts`).
@@ -235,9 +235,9 @@ Key points:
 ```
 
 ```jsonc
-// one of four users; password is non-temporary so the direct grant works unattended
+// one of four users; password comes from `KEYCLOAK_TEST_PASSWORD` env var (non-temporary so the direct grant works unattended)
 { "username": "read-only-client", "enabled": true, "emailVerified": true,
-  "credentials": [{ "type": "password", "value": "wagering-dev-123", "temporary": false }],
+  "credentials": [{ "type": "password", "value": "${KEYCLOAK_TEST_PASSWORD}", "temporary": false }],
   "realmRoles": ["transact:read"] }
 ```
 
@@ -259,7 +259,7 @@ bun test tests/unit/keycloak/realm-export.spec.ts  # 8 pass
 
 # 3. claim fidelity — fetch a real token and decode the payload:
 curl -s -X POST http://localhost:8080/realms/wagering/protocol/openid-connect/token \
-  -d 'grant_type=password&client_id=wagering-cli&username=operator&password=wagering-dev-123' \
+  -d 'grant_type=password&client_id=wagering-cli&username=operator&password=${KEYCLOAK_TEST_PASSWORD}' \
   | jq -r .access_token | cut -d. -f2 | base64 -d 2>/dev/null | jq '{sub, preferred_username, aud, realm_access}'
 ```
 
@@ -337,11 +337,14 @@ bun test tests/unit/keycloak && bun test tests/integration/auth-observability
 - [ ] Realm roles are exactly `transact:read` / `transact:write` (the strings in
       `@Roles(...)`); the four test users and their role sets stay in place — single-role
       users exist to prove both 403 directions.
+- [ ] User passwords in the realm file use the placeholder `${KEYCLOAK_TEST_PASSWORD}`; the
+      actual value is supplied via the `KEYCLOAK_TEST_PASSWORD` environment variable at
+      container startup (never hardcoded in the repo).
 - [ ] After any realm edit: `docker compose up -d --force-recreate keycloak` →
       `bun test tests/unit/keycloak` → live token decode →
       `bun test tests/integration/auth-observability`.
-- [ ] Test credentials are local-only dev values (`wagering-dev-123`), never reused outside
-      the compose stack.
+- [ ] Test credentials are local-only dev values (supplied via `KEYCLOAK_TEST_PASSWORD`),
+      never reused outside the compose stack.
 - [ ] Every change passes `bun run validate` and `bun test`.
 
 ## Anti-Patterns (What NOT to Do)
@@ -357,8 +360,9 @@ bun test tests/unit/keycloak && bun test tests/integration/auth-observability
   `tests/helpers/keycloak-token.ts` at it (G6).
 - ❌ Don't treat `realm-export.spec.ts` green as proof that tokens carry the claims —
   decode a live token too (G7).
-- ❌ Don't commit real credentials into the realm file beyond the local dev fixture, and
-  don't give test users `temporary: true` passwords (the password grant breaks).
+- ❌ Don't commit real credentials into the realm file beyond the local dev fixture (use
+  `${KEYCLOAK_TEST_PASSWORD}` placeholder), and don't give test users `temporary: true`
+  passwords (the password grant breaks).
 
 ## Related Patterns / Docs
 
@@ -378,13 +382,15 @@ bun test tests/unit/keycloak && bun test tests/integration/auth-observability
 ## Safe Change Checklist for Future AI Work
 
 1. **Edit `keycloak/realm-export.json`** — keep the single-object shape; every mapper keeps
-   `name`/`protocol`/`protocolMapper`; builtin scopes stay intact.
+   `name`/`protocol`/`protocolMapper`; builtin scopes stay intact; user passwords use
+   `${KEYCLOAK_TEST_PASSWORD}` placeholder.
 2. **Sync the claim consumers** — if you rename a role: `@Roles(...)` in
    `src/modules/wallets/wallets.controller.ts` / `src/modules/wagering/wagering.controller.ts`
    + `roles.guard` expectations + user `realmRoles`; if you rename the audience client:
    `KEYCLOAK_AUDIENCE` in `.env.example` and every integration spec's `??=` block.
 3. **Re-import**: `docker compose up -d --force-recreate keycloak` (G5), wait for healthy.
-4. **Verify**: `bun test tests/unit/keycloak` (shape) → live token decode (claims) →
+4. **Verify**: `bun test tests/unit/keycloak` (shape) → live token decode (claims, using
+   `KEYCLOAK_TEST_PASSWORD` from env) →
    `bun test tests/integration/auth-observability` (end-to-end 401/403/201).
 5. **Gates (fresh evidence)**: `bun run validate` (exit 0) → `bun test` (0 fail) →
    `docker compose config -q` (exit 0) if compose changed.
