@@ -1,14 +1,18 @@
 import { Module, ValidationPipe, BadRequestException } from '@nestjs/common';
 import type { ValidationError as ClassValidatorError } from 'class-validator';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { APP_FILTER, APP_PIPE } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_PIPE } from '@nestjs/core';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { PostgreSqlDriver } from '@mikro-orm/postgresql';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { validateEnv } from './config/env.validation';
 import { HttpExceptionFilter } from './common/http/exception.filter';
 import { validationError } from './common/http/validation-error';
+import { JwtGuard } from './auth/jwt.guard';
+import { RolesGuard } from './auth/roles.guard';
+import { AuthValidationService } from './auth/auth-validation.service';
 import { HealthModule } from './health/health.module';
+import { ObservabilityModule } from './observability/observability.module';
 import { WalletsModule } from './modules/wallets/wallets.module';
 import { WageringModule } from './modules/wagering/wagering.module';
 import { MessagingModule } from './messaging/messaging.module';
@@ -39,6 +43,7 @@ import type { MikroOrmModuleAsyncOptions } from '@mikro-orm/nestjs';
       },
     ]),
     HealthModule,
+    ObservabilityModule,
     WalletsModule,
     WageringModule,
     MessagingModule,
@@ -47,6 +52,9 @@ import type { MikroOrmModuleAsyncOptions } from '@mikro-orm/nestjs';
   providers: [
     HttpExceptionFilter,
     { provide: APP_FILTER, useExisting: HttpExceptionFilter },
+    { provide: APP_GUARD, useClass: JwtGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
+    AuthValidationService,
     {
       provide: APP_PIPE,
       useValue: new ValidationPipe({
