@@ -12,6 +12,7 @@ import { HealthModule } from './health/health.module';
 import { WalletsModule } from './modules/wallets/wallets.module';
 import { WageringModule } from './modules/wagering/wagering.module';
 import { MessagingModule } from './messaging/messaging.module';
+import { WorkersModule } from './workers/workers.module';
 import { mikroOrmConfig } from './database/mikro-orm.config';
 import type { MikroOrmModuleAsyncOptions } from '@mikro-orm/nestjs';
 
@@ -41,6 +42,7 @@ import type { MikroOrmModuleAsyncOptions } from '@mikro-orm/nestjs';
     WalletsModule,
     WageringModule,
     MessagingModule,
+    WorkersModule,
   ],
   providers: [
     HttpExceptionFilter,

@@ -67,6 +67,7 @@ export interface InboxMessageRow {
 
 export interface OutboxMessageRow {
   id: string;
+  eventId: string;
   aggregateId: string;
   eventType: string;
   payload: Record<string, unknown>;
@@ -149,6 +150,8 @@ export function wagerTransactionFromEntity(row: WagerTransactionRow): WagerTrans
     createdAt: row.createdAt,
     resultBalance: row.resultBalanceAmount ?? undefined,
     resultBalanceCurrency: row.resultBalanceCurrency ?? undefined,
+    referenceAttempts: row.referenceAttempts ?? 0,
+    referenceNextAttemptAt: row.referenceNextAttemptAt ?? undefined,
   });
 }
 
@@ -207,6 +210,7 @@ export function inboxMessageFromEntity(row: InboxMessageRow): InboxMessage {
 export function outboxMessageToEntity(message: OutboxMessage): OutboxMessageRow {
   return {
     id: message.id,
+    eventId: message.eventId,
     aggregateId: message.aggregateId,
     eventType: message.eventType,
     payload: message.payload,
@@ -220,12 +224,13 @@ export function outboxMessageToEntity(message: OutboxMessage): OutboxMessageRow 
 export function outboxMessageFromEntity(row: OutboxMessageRow): OutboxMessage {
   return OutboxMessage.rehydrate({
     id: row.id,
+    eventId: row.eventId,
     aggregateId: row.aggregateId,
     eventType: row.eventType,
     payload: row.payload,
-    occurredAt: row.occurredAt,
+    occurredAt: row.occurredAt instanceof Date ? row.occurredAt : new Date(row.occurredAt),
     attempts: row.attempts,
-    nextAttemptAt: row.nextAttemptAt ?? undefined,
-    publishedAt: row.publishedAt ?? undefined,
+    nextAttemptAt: row.nextAttemptAt ? (row.nextAttemptAt instanceof Date ? row.nextAttemptAt : new Date(row.nextAttemptAt)) : undefined,
+    publishedAt: row.publishedAt ? (row.publishedAt instanceof Date ? row.publishedAt : new Date(row.publishedAt)) : undefined,
   });
 }

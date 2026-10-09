@@ -341,17 +341,17 @@ export class MikroOrmOutboxMessageRepository implements OutboxMessageRepository 
     }
     // raw query: SKIP LOCKED is not expressible via em.find(); em.execute (not
     // em.getConnection().execute) keeps it inside the caller's transaction.
-    const dueBy = new Date().toISOString();
+const dueBy = new Date().toISOString();
     const rows = (await (em as unknown as SqlEntityManager).execute(
-      `SELECT id, aggregate_id AS "aggregateId", event_type AS "eventType", payload,
-              occurred_at AS "occurredAt", attempts,
-              next_attempt_at AS "nextAttemptAt", published_at AS "publishedAt"
-         FROM outbox_message
-        WHERE published_at IS NULL
-          AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
-        ORDER BY next_attempt_at ASC NULLS FIRST, occurred_at ASC
-        LIMIT ?
-          FOR UPDATE SKIP LOCKED`,
+      `SELECT id, event_id AS "eventId", aggregate_id AS "aggregateId", event_type AS "eventType", payload,
+               occurred_at AS "occurredAt", attempts,
+               next_attempt_at AS "nextAttemptAt", published_at AS "publishedAt"
+          FROM outbox_message
+         WHERE published_at IS NULL
+           AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+         ORDER BY next_attempt_at ASC NULLS FIRST, occurred_at ASC
+         LIMIT ?
+           FOR UPDATE SKIP LOCKED`,
       [dueBy, limit],
     )) as unknown as OutboxMessageRow[];
     return rows.map((r) => outboxMessageFromEntity(r));
