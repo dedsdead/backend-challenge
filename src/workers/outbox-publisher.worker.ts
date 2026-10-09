@@ -105,7 +105,7 @@ export class OutboxPublisherWorker {
     const entries = messages.map(msg => ({
       Id: msg.id,
       MessageBody: JSON.stringify({
-        eventId: msg.id,
+        eventId: msg.eventId,
         eventType: msg.eventType,
         aggregateId: msg.aggregateId,
         correlationId: undefined,

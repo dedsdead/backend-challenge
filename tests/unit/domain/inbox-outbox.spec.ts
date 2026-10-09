@@ -140,6 +140,7 @@ describe('OutboxMessage', () => {
     it('reconstructs outbox message from state', () => {
       const msg = OutboxMessage.rehydrate({
         id: 'out-1',
+        eventId: 'evt-1',
         aggregateId: 'agg-1',
         eventType: 'TestEvent',
         payload: { test: 'data' },
@@ -150,6 +151,7 @@ describe('OutboxMessage', () => {
       });
 
       expect(msg.id).toBe('out-1');
+      expect(msg.eventId).toBe('evt-1');
       expect(msg.attempts).toBe(2);
       expect(msg.nextAttemptAt).toEqual(new Date('2024-01-01T10:05:00Z'));
       expect(msg.isPending()).toBe(true);

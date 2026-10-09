@@ -279,6 +279,7 @@ describe('Workers Integration (T042)', () => {
       await em.persist(
         em.create(OutboxMessageEntity, {
           id: outboxMsgId,
+          eventId: outboxMsgId,
           aggregateId: v4(),
           eventType: 'WagerTransactionProcessed',
           payload: { transactionId: 'test', walletId, kind: 'BET', money: { amount: '100.00', currency: 'BRL' } },
@@ -314,8 +315,10 @@ describe('Workers Integration (T042)', () => {
       // Create 200 pending outbox messages
       const messages: any[] = [];
       for (let i = 0; i < 200; i++) {
+        const id = v4();
         messages.push({
-          id: v4(),
+          id,
+          eventId: id,
           aggregateId: v4(),
           eventType: 'WagerTransactionProcessed',
           payload: { index: i },

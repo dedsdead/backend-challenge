@@ -1,4 +1,5 @@
 import { IntegrationEvent } from '../../events/integration-event';
+import { randomUUID } from 'crypto';
 
 export interface OutboxMessageState {
   id: string;
@@ -134,6 +135,7 @@ const VALIDATORS: Record<string, (p: Record<string, unknown>) => void> = {
 
 export interface OutboxMessageState {
   id: string;
+  eventId: string;
   aggregateId: string;
   eventType: string;
   payload: Record<string, unknown>;
@@ -145,6 +147,7 @@ export interface OutboxMessageState {
 
 export class OutboxMessage {
   public readonly id: string;
+  public readonly eventId: string;
   public readonly aggregateId: string;
   public readonly eventType: string;
   public readonly payload: Readonly<Record<string, unknown>>;
@@ -155,6 +158,7 @@ export class OutboxMessage {
 
   private constructor(
     id: string,
+    eventId: string,
     aggregateId: string,
     eventType: string,
     payload: Record<string, unknown>,
@@ -164,6 +168,7 @@ export class OutboxMessage {
     publishedAt: Date | undefined,
   ) {
     this.id = id;
+    this.eventId = eventId;
     this.aggregateId = aggregateId;
     this.eventType = eventType;
     this.payload = payload;
@@ -175,11 +180,11 @@ export class OutboxMessage {
 
   static enqueue(event: { eventId: string; aggregateId: string; eventType: string; payload: Record<string, unknown>; occurredAt: Date }): OutboxMessage {
     OutboxMessage.validatePayload(event.eventType, event.payload);
-    return new OutboxMessage(event.eventId, event.aggregateId, event.eventType, event.payload, event.occurredAt, 0, undefined, undefined);
+    return new OutboxMessage(randomUUID(), event.eventId, event.aggregateId, event.eventType, event.payload, event.occurredAt, 0, undefined, undefined);
   }
 
   static rehydrate(state: OutboxMessageState): OutboxMessage {
-    return new OutboxMessage(state.id, state.aggregateId, state.eventType, state.payload, state.occurredAt, state.attempts, state.nextAttemptAt, state.publishedAt);
+    return new OutboxMessage(state.id, state.eventId, state.aggregateId, state.eventType, state.payload, state.occurredAt, state.attempts, state.nextAttemptAt, state.publishedAt);
   }
 
   private static validatePayload(eventType: string, payload: Record<string, unknown>): void {

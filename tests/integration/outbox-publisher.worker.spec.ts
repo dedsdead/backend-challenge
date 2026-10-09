@@ -66,6 +66,7 @@ describe('OutboxPublisherWorker (T038)', () => {
       await tx.persist(
         tx.create(OutboxMessageEntity, {
           id: v4(),
+          eventId: v4(),
           aggregateId: v4(),
           eventType: 'WalletBalanceChanged',
           payload: { walletId: 'test', transactionId: 'test', direction: 'CREDIT', money: { amount: '100.00', currency: 'BRL' }, balanceBefore: { amount: '0.00', currency: 'BRL' }, balanceAfter: { amount: '100.00', currency: 'BRL' }, walletVersion: 1 },
@@ -76,6 +77,7 @@ describe('OutboxPublisherWorker (T038)', () => {
       await tx.persist(
         tx.create(OutboxMessageEntity, {
           id: v4(),
+          eventId: v4(),
           aggregateId: v4(),
           eventType: 'WagerTransactionProcessed',
           payload: { transactionId: v4(), walletId: v4(), kind: 'BET', money: { amount: '100.00', currency: 'BRL' }, balanceBefore: { amount: '1000.00', currency: 'BRL' }, balanceAfter: { amount: '900.00', currency: 'BRL' }, walletVersion: 1 },

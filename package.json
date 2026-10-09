@@ -39,6 +39,7 @@
   },
   "devDependencies": {
     "@mikro-orm/cli": "^7.2.4",
+    "@nestjs/testing": "^12.1.2",
     "@oxc-node/core": "^0.1.4",
     "@types/bun": "^1.4.2",
     "@types/express": "^5.0.6",

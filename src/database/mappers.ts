@@ -67,6 +67,7 @@ export interface InboxMessageRow {
 
 export interface OutboxMessageRow {
   id: string;
+  eventId: string;
   aggregateId: string;
   eventType: string;
   payload: Record<string, unknown>;
@@ -209,6 +210,7 @@ export function inboxMessageFromEntity(row: InboxMessageRow): InboxMessage {
 export function outboxMessageToEntity(message: OutboxMessage): OutboxMessageRow {
   return {
     id: message.id,
+    eventId: message.eventId,
     aggregateId: message.aggregateId,
     eventType: message.eventType,
     payload: message.payload,
@@ -222,6 +224,7 @@ export function outboxMessageToEntity(message: OutboxMessage): OutboxMessageRow 
 export function outboxMessageFromEntity(row: OutboxMessageRow): OutboxMessage {
   return OutboxMessage.rehydrate({
     id: row.id,
+    eventId: row.eventId,
     aggregateId: row.aggregateId,
     eventType: row.eventType,
     payload: row.payload,
