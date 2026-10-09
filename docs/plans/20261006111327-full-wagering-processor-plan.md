@@ -794,6 +794,16 @@ out-of-order references resolved with bounded retries.
 | T041 | ✅ Completed | WorkersModule created at `src/workers/workers.module.ts` registering both OutboxPublisherWorker and PendingReferenceWorker as Injectable services. Registered in AppModule imports. Workers start automatically via onModuleInit when WORKERS_ENABLED=true. |
 | T042 | ✅ Completed | Integration tests at `tests/integration/workers.spec.ts` covering: AC-9 (out-of-order ROLLBACK → BET resolution with inverted ledger entry), AC-10 (max 10 attempts → REJECTED REFERENCE_NOT_FOUND with WagerTransactionRejected in outbox), AC-15 (crash-after-commit: pending outbox row published on restart), Publisher concurrency (2 instances process 200 pending rows, all published via FOR UPDATE SKIP LOCKED, no row lost). All 4 tests pass individually (20 assertions total). |
 
+**Execution Log — 2026-10-09 (Critical fixes C1, C2, C4, C5)**
+
+| Task | Status | Notes |
+|------|--------|-------|
+| C5 | ✅ Completed | Added `eventId` to `OutboxMessage` domain entity, entity, mapper, repository query, and worker. Created migration 20261009001637 to add `event_id` column with backfill. Worker now publishes correct `eventId` in SQS payload. |
+| C3 | ✅ Completed | Removed `OutboxPublisherWorker` from `MessagingModule` to avoid double instantiation. Worker now only registered in `WorkersModule`. |
+| C1 | 🟡 In Progress | Transactional outbox pattern: SQS publish still outside DB transaction. Need to implement two-phase or document at-least-once with consumer idempotency. |
+| C2 | 🟡 In Progress | Error handling: `processBatch` still swallows errors. Need to implement retry scheduling and rethrow for monitoring. |
+| C4 | 🟡 In Progress | Pending reference worker lacks `FOR UPDATE SKIP LOCKED` claim. Need to add `claimPendingReferenceBatch` repository method. |
+
 ---
 
 ### Phase 8: Auth & Observability
