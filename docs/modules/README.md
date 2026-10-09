@@ -7,8 +7,8 @@ Canonical documentation for backend modules (one file per module:
 
 | Module | Description | Status |
 |---|---|---|
-| [wallets](wallets.md) | Wallet lifecycle, ledger pagination, reconciliation | Phase 5 implemented |
-| [wagering](wagering.md) | Transaction submit pipeline (idempotency, locks, references) and status lookups | Phase 5 implemented (HTTP ingress only; concurrency proven) |
+| [wallets](wallets.md) | Wallet lifecycle, ledger pagination, reconciliation | Phase 8 current (guarded by global auth; metrics/logging via `src/observability/`) |
+| [wagering](wagering.md) | Transaction submit pipeline (idempotency, locks, references) and status lookups | Phase 8 current (HTTP + SQS ingress, workers, global auth, `GET /metrics`) |
 
 ## Conventions
 

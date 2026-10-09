@@ -3,7 +3,7 @@ module: wallets
 title: Wallets Module
 repo: backend
 path: src/modules/wallets/
-last_updated: 2026-10-08
+last_updated: 2026-10-09
 entities:
   - Wallet
   - WagerTransaction
@@ -40,15 +40,21 @@ against the same wallet row.
 - Error contract: `src/common/http/exception.filter.ts` (global, `APP_FILTER`)
 - Validation contract: `src/app.module.ts` (global `ValidationPipe` with
   `whitelist` + `forbidNonWhitelisted` + `transform` + flattening `exceptionFactory`)
+- Auth (global, Phase 8): `src/auth/jwt.guard.ts`, `src/auth/roles.guard.ts`,
+  `src/auth/roles.decorator.ts`, `src/auth/public.decorator.ts`
 
 ## Current Implementation Snapshot
 
 - `@Module({ controllers: [WalletsController], providers: [WalletsService, ReconciliationService] })` — no `imports`, no `exports`.
 - 4 endpoints implemented: `POST /wallets`, `GET /wallets/:walletId`,
   `GET /wallets/:walletId/ledger`, `POST /wallets/:walletId/reconciliation`.
-- **No auth on any endpoint today** — the Phase 4 decision is to run tokenless; JWT/role
-  guards are plan **T044 (Phase 8)**. Tests explicitly assert this ("without tokens —
-  guards arrive in plan T044").
+- **Auth enforced since Phase 8 (T044)** — the global `JwtGuard` + `RolesGuard`
+  (`APP_GUARD` in `src/app.module.ts`) guard every non-`@Public()` route;
+  `POST /wallets` and `POST /wallets/:walletId/reconciliation` require
+  `transact:write`, the GETs `transact:read` (`@Roles` on the handlers in
+  `wallets.controller.ts`). Tests authenticate with real Keycloak tokens
+  (`tests/helpers/keycloak-token.ts`); `401 UNAUTHORIZED` / `403 ROLE_FORBIDDEN`
+  behavior is asserted in `tests/integration/auth-observability.spec.ts`.
 - Every service method runs inside `em.transactional(...)` on the injected **root
   `EntityManager` (transaction factory)**; repositories are constructed **per
   transaction** (`new MikroOrmWalletRepository(tx)`), never injected as singletons;
@@ -56,14 +62,16 @@ against the same wallet row.
   (`get`, `listLedger`) intentionally stay inside short transactions — a pinned user
   decision (plan Execution Log 2026-10-08).
 - Reconciliation runs at `IsolationLevel.REPEATABLE_READ`, logs a warning and bumps the
-  in-process `metrics.reconciliationDivergence` **`CounterStub`** on divergence
-  (prom-client instrument arrives with **T046 / Phase 8**).
+  `metrics.reconciliationDivergence` counter (`wagering_reconciliation_divergences_total`,
+  a `prom-client` Counter behind the facade since **T046 / Phase 8**) on divergence.
 - Zero-initial-balance wallets create **only** the wallet row (no `OPENING`, no ledger
   entry, no outbox event).
 - **Lock-conflict and transaction metrics** (`wageringLockConflictsTotal`,
   `wageringTxTotal{processed,rejected,pendingReference}`, `wageringProcessingSeconds`)
-  are defined in `src/common/metrics/metrics.ts` and instrumented in
-  `SubmitTransactionUseCase` (Phase 5, T033); the wallets module does not directly
+  are defined in `src/observability/metrics.service.ts` (re-exported by
+  `src/common/metrics/metrics.ts`) and instrumented in
+  `SubmitTransactionUseCase` (Phase 5, T033); they are exposed at `GET /metrics`
+  since T046; the wallets module does not directly
   increment these but they cover wallet-level contention.
 
 ## Responsibilities
@@ -79,19 +87,22 @@ against the same wallet row.
 
 ## Public API
 
-**Auth note:** there is currently **no guard** on these endpoints (no `JwtAuthGuard`,
-no `@Public()` needed). The pinned error contract reserves `401 UNAUTHORIZED` and
-`403 ROLE_FORBIDDEN` for when T044 (Phase 8) adds the global JWT + roles guards;
-plan T043 gives `POST /wallets` and `POST /wallets/:walletId/reconciliation` the
-`transact:write` role, the GETs `transact:read`. Organization-membership checks do not
-exist in this codebase (no org model in this domain).
+**Auth note:** guarded by the **global** `JwtGuard` + `RolesGuard` (`src/auth/`,
+registered as `APP_GUARD` in `src/app.module.ts`); the controller itself declares
+only `@Roles` — `POST /wallets` and `POST /wallets/:walletId/reconciliation`
+require `transact:write`, the GETs `transact:read`. Missing/invalid token ⇒
+`401 UNAUTHORIZED`, valid token without the required realm role ⇒
+`403 ROLE_FORBIDDEN` (fail-closed; asserted in
+`tests/integration/auth-observability.spec.ts`). Organization-membership checks
+do not exist in this codebase (no org model in this domain), and the Phase 8
+tokens carry no `providerId` binding either.
 
 | Method | Path | Auth | Success | Description |
 |--------|------|------|---------|-------------|
-| `POST` | `/wallets` | none (Phase 4) | `201` | Create wallet for `playerId` + currency with initial balance |
-| `GET` | `/wallets/:walletId` | none (Phase 4) | `200` | Read one wallet |
-| `GET` | `/wallets/:walletId/ledger` | none (Phase 4) | `200` | Newest-first keyset page of ledger entries |
-| `POST` | `/wallets/:walletId/reconciliation` | none (Phase 4) | `200` | Compare stored balance vs. ledger sum |
+| `POST` | `/wallets` | `transact:write` | `201` | Create wallet for `playerId` + currency with initial balance |
+| `GET` | `/wallets/:walletId` | `transact:read` | `200` | Read one wallet |
+| `GET` | `/wallets/:walletId/ledger` | `transact:read` | `200` | Newest-first keyset page of ledger entries |
+| `POST` | `/wallets/:walletId/reconciliation` | `transact:write` | `200` | Compare stored balance vs. ledger sum |
 
 `:walletId` is parsed with `ParseUUIDPipe` → a non-UUID is `400 VALIDATION_ERROR`.
 
@@ -183,8 +194,9 @@ transaction factory; `allowGlobalContext: false`):
      `setResultBalance(initial)`;
      **NOT NULL workaround:** `roundId` and `gameId` columns are required (migration 001)
      but OPENING has no real round/game. Both are set to `wallet.id` as a deterministic
-     sentinel. Documented here and in `wallets.service.ts:116-117`. Revisit with
-     migration 002 (T039) to make columns nullable.
+      sentinel. Documented here and in `wallets.service.ts:116-117`. Revisit with a
+      future migration to make the columns nullable (the T039 review, 2026-10-08,
+      reported no schema delta).
    - `WalletLedgerEntry` `CREDIT`, `balanceBefore = 0.00`, `balanceAfter = initial`;
    - `OutboxMessage.enqueue` of `WalletBalanceChanged` (`walletVersion`, `correlationId = opening id`).
    All four rows commit or roll back together (spec §9, AC-1).
@@ -242,16 +254,19 @@ Produced by `src/common/http/exception.filter.ts` (global). Error body shape:
 | Unknown wallet on any read | `404` | `NOT_FOUND` | **no** `failureCode` |
 | Transient infrastructure failure (PG down / connection refused) | `503` | `SERVICE_UNAVAILABLE` | `failureCode: INFRASTRUCTURE_ERROR` + `Retry-After: 5` |
 | Anything unexpected | `500` | `INTERNAL_ERROR` | message masked to `"Internal server error"`, `errors` dropped |
-| (Reserved) missing/invalid token | `401` | `UNAUTHORIZED` | surfaces only after T044 (Phase 8) |
-| (Reserved) valid token, missing role | `403` | `ROLE_FORBIDDEN` | surfaces only after T044 (Phase 8) |
+| Missing/invalid token (or unreachable JWKS) | `401` | `UNAUTHORIZED` | global `JwtGuard` (`src/auth/jwt.guard.ts`), fail-closed — since T044 (Phase 8) |
+| Valid token, missing realm role | `403` | `ROLE_FORBIDDEN` | global `RolesGuard` (`src/auth/roles.guard.ts`), fail-closed — since T044 (Phase 8) |
 
 Client `x-correlation-id` matching `/^[A-Za-z0-9._-]{1,128}$/` is echoed as
-`correlationId`.
+`correlationId`; independently, `correlationIdMiddleware`
+(`src/observability/correlation.ts`) assigns/echoes the `x-correlation-id`
+response header on **every** request (generated when absent or invalid).
 
 ## Events
 
 Emitted as **`outbox_message` rows in the same SQL transaction as the state change**
-(transactional outbox; actual publication to SQS is **Phase 7**, T038 — at-least-once):
+(transactional outbox; published to SQS by the Phase 7 worker
+`src/workers/outbox-publisher.worker.ts`, at-least-once):
 
 - `WalletBalanceChanged` (version 1) — enqueued only when a wallet is created with a
   non-zero `initialBalance`. `aggregateId = walletId`, `correlationId = opening
@@ -279,16 +294,20 @@ implementations, not through exported services. `WalletsService` is additionally
 directly (constructed with an EM) by wagering integration tests to seed wallets.
 
 **Implicit/global dependencies:** `AppModule` provides MikroORM (root), the global
-`ValidationPipe` (`APP_PIPE`) and `HttpExceptionFilter` (`APP_FILTER`); `MoneyDto`
+`ValidationPipe` (`APP_PIPE`), `HttpExceptionFilter` (`APP_FILTER`), and — since
+Phase 8 — the global `JwtGuard` + `RolesGuard` (`APP_GUARD`, `src/auth/`);
+`ObservabilityModule` contributes the app-wide correlation middleware and
+`GET /metrics`; `MoneyDto`
 (`src/common/dto/money.dto.ts`), `payloadHash` (`src/common/idempotency/payload-hash.ts`),
-`metrics` stub (`src/common/metrics/metrics.ts`), domain entities under `src/domain/`,
+`metrics` facade (`src/common/metrics/metrics.ts`), domain entities under `src/domain/`,
 repositories under `src/database/repositories/`.
 
 ## Testing
 
 | File | What it proves |
 |---|---|
-| `tests/integration/wallets.http.spec.ts` (21 tests) | Full HTTP contract of all 4 endpoints: `201` exact 4-key body; `409 WALLET_EXISTS` for duplicate; same player in another currency `201` (G18); `400 VALIDATION_ERROR` with per-field dotted `errors[]` and non-empty constraints (AC-24), including missing `initialBalance` → 400 not 500 (CR-1) and unknown fields → 400; `GET` body + `404` + malformed-UUID `400`; ledger newest-first keyset paging across 3 pages with no duplicate/skip (AC-21), stability under inserts between pages, empty envelope (AC-15), `limit` bounds `0/101/-1/abc` → 400, undecodable cursor → 400 (AC-21a), unknown wallet → 404; reconciliation consistent body, zero-balance wallet, seeded divergence → `consistent:false` + `difference:-10.00` + `logger.warn` + `metrics.reconciliationDivergence` +1 + wallet unchanged (never corrected, AC-17), unknown wallet → 404, negative ledger sum → 200 not 500 (IM-2), malformed walletId → 400. Runs **without tokens** (T029b). |
+| `tests/integration/wallets.http.spec.ts` (23 tests) | Full HTTP contract of all 4 endpoints: `201` exact 4-key body; `409 WALLET_EXISTS` for duplicate; same player in another currency `201` (G18); `400 VALIDATION_ERROR` with per-field dotted `errors[]` and non-empty constraints (AC-24), including missing `initialBalance` → 400 not 500 (CR-1) and unknown fields → 400; `GET` body + `404` + malformed-UUID `400`; ledger newest-first keyset paging across 3 pages with no duplicate/skip (AC-21), stability under inserts between pages, empty envelope (AC-15), `limit` bounds `0/101/-1/abc` → 400, undecodable cursor → 400 (AC-21a), unknown wallet → 404; reconciliation consistent body, zero-balance wallet, seeded divergence → `consistent:false` + `difference:-10.00` + `logger.warn` + `metrics.reconciliationDivergence` +1 + wallet unchanged (never corrected, AC-17), unknown wallet → 404, negative ledger sum → 200 not 500 (IM-2), malformed walletId → 400. Runs **with operator bearer tokens** since T048
+(`tests/helpers/keycloak-token.ts`); 401/403 paths live in `auth-observability.spec.ts`. |
 | `tests/integration/wallets.service.spec.ts` (7 tests) | Service-level behavior against real PG: creates with `version: 1`; non-zero initial balance persists `OPENING` (`PROCESSED`, `result_balance 100.00`) + one `CREDIT` ledger entry + `WalletBalanceChanged` outbox row; zero balance persists wallet row only (no tx, no ledger); duplicate ⇒ `WalletExistsError` with **nothing** persisted (original balance intact); same player different currency ⇒ distinct wallets; `get` returns stored wallet; `get` ⇒ `NotFoundError`. |
 | `tests/unit/modules/wallets/ledger-cursor.codec.spec.ts` (8) | Cursor round-trip, query-safe base64url output, and strict rejection (garbage, non-JSON base64, missing `id`, non-UUID, invalid `createdAt`, extra/missing fields). |
 | `tests/unit/modules/wallets/dto/wallet-response.dto.spec.ts` (2) | Response maps exactly `id, playerId, balance, version`. |
@@ -296,38 +315,38 @@ repositories under `src/database/repositories/`.
 | `tests/unit/modules/wallets/dto/ledger-page-response.dto.spec.ts` (3) | Entry field mapping, opaque `nextCursor` when more pages exist, empty-page shape. |
 | `tests/unit/modules/wallets/dto/reconciliation-response.dto.spec.ts` (7) | Signed `difference` accepts `0.00`/positive/negative, rejects `+`, non-decimals, negative `checkedEntries`; divergence mapping. |
 | `tests/integration/http-api.spec.ts` (8 e2e scenarios, wallets parts) | Wallet lifecycle walk: create `version 1` → duplicate `409 WALLET_EXISTS` → second currency `201` (AC-1/AC-2/G18); reconciliation consistent + zero-balance (AC-17/AC-17b); `limit=1` ledger walk with no duplicates/skips and newest-first equality (AC-21); `OPENING` rejected externally (AC-18). |
-| `tests/integration/bootstrap.spec.ts` (5) | Global `ValidationPipe` + `HttpExceptionFilter` actually registered; pipe enforces transform/whitelist; unknown route → `404 NOT_FOUND` contract body. |
+| `tests/integration/bootstrap.spec.ts` (6) | Global `ValidationPipe` + `HttpExceptionFilter` actually registered; pipe enforces transform/whitelist; correlation-id middleware assigns/echoes `x-correlation-id` (T045); readiness body `{postgres:'ok', sqs:'ok'}` (T047); unknown route → `404 NOT_FOUND` contract body. |
 | `tests/unit/common/http/exception.filter.spec.ts` (38) | The shared error contract this module relies on (400/404/409/422/500/503 mapping, masking, `Retry-After`, correlation-id validation). |
 
 ## Not Yet / Deferred
 
 **Planned — not implemented today (explicitly marked; do not document as done):**
 
-- **Auth / roles (T044, Phase 8):** no JWT guard, no `@Roles` — all four endpoints are
-  unauthenticated. `401 UNAUTHORIZED` / `403 ROLE_FORBIDDEN` exist only in the pinned
-  contract and the filter mapping, not in any live path.
-- **Metrics (T046, Phase 8):** `metrics.reconciliationDivergence` is an
-  in-process `CounterStub` (`src/common/metrics/metrics.ts`), not a Prometheus counter;
-  there is no `GET /metrics` yet. **Lock-conflict and transaction metrics**
-  (`wageringLockConflictsTotal`, `wageringTxTotal{processed,rejected,pendingReference}`,
-  `wageringProcessingSeconds`) are implemented as `CounterStub`/`HistogramStub` in
-  `src/common/metrics/metrics.ts` (Phase 5, T033) and instrumented in
-  `SubmitTransactionUseCase`; Prometheus instruments arrive with T046.
-- **Structured logging / correlation propagation (T045, Phase 8):** `ReconciliationService`
-  uses the plain Nest `Logger`; no pino bindings or redaction yet.
+- **Auth/observability residual gaps (Phase 8 itself — T043–T048 — is done):** the
+  guards do not bind `providerId` to the token, so `GET /wallets/:walletId` and the
+  ledger remain readable by any `transact:read` holder (no cross-provider wallet
+  scoping either); there is no org-membership model; `GET /metrics` is
+  intentionally unauthenticated (network-restricted assumption).
+- **`ReconciliationService` logging detail:** still the Nest `Logger` (emitted as
+  JSON through the pino app logger); no module-local pino child loggers/bindings.
+  The divergence counter it increments is a real `prom-client` counter
+  (`wagering_reconciliation_divergences_total`) since T046, not an in-process stub.
 - **Concurrency suites (T030–T033, Phase 5):** **completed** — hot-wallet, duplicate-flood,
   and multi-instance tests exist in `tests/concurrency/` and pass; lock-conflict
   instrumentation is in place.
-- **Performance follow-ups (candidate review with T039 / Phase 7):** per-`save()`
+- **Performance follow-ups (candidates from the completed T039 migration/perf review;
+  still unimplemented):** per-`save()`
   `findOne + flush` round trips; `pageByCursor` `$or` predicate could become a row-value
   predicate.
 - **Read-path transactions stay** (pinned decision, not a gap): reviewer suggestion to
   unwrap read paths was rejected because it contradicts the root-EM /
   `allowGlobalContext: false` design.
 
-**Explicitly out of scope for this module:** SQS consumer (Phase 6), outbox publisher and
-pending-reference worker (Phase 7) — but note the module already writes the outbox rows
-those workers will publish.
+**Explicitly out of scope for this module:** the SQS consumer (implemented in
+`src/messaging/`, Phase 6), the outbox publisher and pending-reference worker
+(implemented in `src/workers/`, Phase 7) — but note the module already writes the
+outbox rows those workers publish. Auth guards and metrics live in `src/auth/` /
+`src/observability/`, not here.
 
 ## Safe Change Checklist for Future AI Work
 
@@ -345,8 +364,11 @@ those workers will publish.
    `@IsDefined()`-style guards for any nested object to avoid a `500` (CR-1 regression).
 5. Never add a write/mutation to `ReconciliationService` (AC-17: report, never correct)
    and keep `REPEATABLE_READ` + `Money.fromInternal` (IM-2).
-6. Do not add guards or role decorators until T044 (Phase 8) lands globally; when it
-   does, only update the Auth column in this doc and add role expectations to
-   `auth-observability.spec.ts` — the controller itself stays guard-free.
+6. Do not add controller-local guards — auth is global (`JwtGuard` + `RolesGuard`
+   as `APP_GUARD` in `src/app.module.ts`; controllers only carry `@Roles`). Role
+   changes touch the `@Roles(...)` decorator here, the roles in
+   `keycloak/realm-export.json` (+ `tests/unit/keycloak/realm-export.spec.ts`), and
+   the 403 cases in `tests/integration/auth-observability.spec.ts` together; keep
+   this doc's Auth column in sync.
 7. Verify with `bun run validate` then `bun test` (integration requires the compose
    stack: PostgreSQL/LocalStack/Keycloak up).

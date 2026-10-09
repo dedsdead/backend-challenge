@@ -11,13 +11,15 @@ the spec; other environments are pending decisions.
 | Purpose | development + integration/concurrency tests | shared integration testing | pre-production validation | production |
 | Runtime | Docker Compose (PostgreSQL 16 + LocalStack 4.13.1 + Keycloak 26.8) + Bun 1.4.2 | not defined yet | not defined yet | not defined yet |
 | Data | disposable, seeded | synthetic only | synthetic only | real |
-| Status | primary environment for this project; implemented Phases 1–4 (2026-10-06/08): three containers + env validation + health endpoints + persistence (entities, repositories, migration 001 applied 2026-10-07) + HTTP API (`src/modules/wallets/`, `src/modules/wagering/`, 2026-10-08); realm config and JWT auth planned (plan T043/T044) | pending decision | pending decision | pending decision |
+| Status | primary environment for this project; implemented Phases 1–8 (2026-10-06/09): three containers + env validation + health endpoints (readiness = PostgreSQL + SQS) + persistence (entities, repositories, migration 001 applied 2026-10-07) + HTTP API (`src/modules/wallets/`, `src/modules/wagering/`, 2026-10-08) + SQS consumer/workers (Phases 6–7) + auth & observability (Phase 8, 2026-10-09: realm `keycloak/realm-export.json` with roles/clients/users, global JWT + roles guards, pino logging with redaction, correlation middleware, `GET /metrics`) | pending decision | pending decision | pending decision |
 
 ## Configuration and Secrets Boundaries
 
 - **Local**: all values non-secret, defined in `.env` / compose files; the committed
   template `.env.example` enumerates every variable the app requires, `.env` itself
-  is gitignored, and LocalStack credentials are well-known defaults. Never commit
+  is gitignored, LocalStack credentials are well-known defaults, and the Keycloak
+  dev credentials (admin `admin`/`admin`; realm users password `wagering-dev-123`,
+  seed data in `keycloak/realm-export.json`) are non-secret by design. Never commit
   real secrets.
 - **Non-local**: secrets come from the chosen provider's secret store (record the
   store in [infrastructure.md](infrastructure.md) when decided) — never from repo
@@ -61,18 +63,27 @@ deploy must tolerate 3+ running instances (rolling, no global downtime assumptio
 | Health | `/health/live`, `/health/ready` | same | same | same |
 | Access | developer machine | team | restricted | restricted, audited |
 
-Current state (Phases 1–5, 2026-10-08): health endpoints behave as tabulated;
+Current state (Phases 1–8, 2026-10-09): health endpoints behave as tabulated
+(`/health/ready` returns `{postgres:'ok', sqs:'ok'}`);
 persistence (entities, repositories, migration 001 applied to the local database)
-is in place; the wallet/wagering HTTP endpoints serve **without auth** (Phase 4
-runs tokenless by decision C3); structured (pino) logging, `GET /metrics`, and the
-required log fields are **not wired yet** — `pino`/`prom-client` are installed but
-unused (Phase 5 added the in-memory counter stub
-`src/common/metrics/metrics.ts` with `wageringLockConflictsTotal`,
+is in place; the wallet/wagering HTTP endpoints **require a Keycloak bearer
+token** (`transact:write` on POSTs, `transact:read` on GETs — global guards in
+`src/auth/`; the integration suites authenticate through
+`tests/helpers/keycloak-token.ts`). Structured (pino) logging is wired
+(`src/observability/logger.ts`, `PinoLoggerService` booted in `src/main.ts`,
+redacting `authorization` headers and `data`/`payload`/`body` paths), every
+request is assigned/echoed an `x-correlation-id`
+(`src/observability/correlation.ts`, app-wide middleware), and `GET /metrics`
+serves the Prometheus registry (`src/observability/metrics.service.ts`, facade
+`src/common/metrics/metrics.ts`) with `wageringLockConflictsTotal`,
 `wageringTxTotal{processed,rejected,pendingReference}`,
-`wageringProcessingSeconds`); planned in plan T045/T046.
+`wageringProcessingSeconds`, plus duplicates, SQS retries, DLQ, reconciliation
+divergences and the `wagering_outbox_lag` gauge (T045/T046/T047).
 Prerequisite: `bun test` needs the local Docker stack — run
-`docker compose up -d --wait` first (`tests/integration/bootstrap.spec.ts` boots the
-app and hits `/health/ready`; the Phase 4 suites
+`docker compose up -d --wait` first (Keycloak included: the token suites need the
+`wagering` realm imported, not just healthy containers;
+`tests/integration/bootstrap.spec.ts` boots
+the app and hits `/health/ready`; the Phase 4 suites
 `tests/integration/{http-api,wallets.http,wagering.http,wallets.service,submit-transaction.use-case}.spec.ts`
 boot the app or hit the same database; `tests/integration/{schema,repositories}.spec.ts` and
 `tests/integration/entities/*.spec.ts` read/write the local database directly, so

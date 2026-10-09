@@ -17,21 +17,21 @@ specification (`../README.md`) and [architecture.md](architecture.md).
 | Reconciliation | Recomputing balance from the ledger and reporting (never silently fixing) divergence. | spec §9 |
 | Double-entry ledger | Optional differential: paired debit/credit entries per transaction. Not required. | spec §6.4 |
 | `PENDING` | Internal in-flight state only — never returned in HTTP responses (clarified 2026-10-06); spec §6.3: accepted, not yet applied. | spec §6.3, plan §4 |
-| `PENDING_REFERENCE` | Waiting for the referenced transaction; reprocessed by scheduled worker with backoff. Columns `reference_attempts` / `reference_next_attempt_at` exist since migration 001; the worker itself is planned (Phase 7). | spec §7.1 |
+| `PENDING_REFERENCE` | Waiting for the referenced transaction; reprocessed by scheduled worker with backoff. Columns `reference_attempts` / `reference_next_attempt_at` exist since migration 001; the worker itself landed in Phase 7 (`src/workers/pending-reference.worker.ts`). | spec §7.1 |
 | `PROCESSED` / `REJECTED` / `FAILED` | Terminal states — no further transitions; attempting one is a programming error. | spec §6.3 |
 | `failureCode` | Stable, machine-readable reason for rejection/failure; taxonomy defined by the implementation. | spec §7.2 |
 | `code` | Stable HTTP error-class identifier in API response bodies (e.g. `UNAUTHORIZED`, `ROLE_FORBIDDEN`, `VALIDATION_ERROR`) — distinct from `failureCode`, which is domain-level. | plan §4 |
-| `transact:write` / `transact:read` | Keycloak roles: write required for POST endpoints, read for GET. | plan T043/T044 |
+| `transact:write` / `transact:read` | Keycloak realm roles: write required for POST endpoints, read for GET; enforced by `src/auth/roles.guard.ts` against `realm_access.roles` (fail-closed `403 ROLE_FORBIDDEN`). | `src/auth/roles.guard.ts`, plan T043/T044 (implemented Phase 8) |
 | Idempotency conflict | Same `Idempotency-Key` with a different `payloadHash` — distinct from a replay. | spec §9 |
 | Lock conflict | A `findByIdForUpdate` wait exceeding 50ms, indicating contention on the wallet row; counted by `wageringLockConflictsTotal` metric (Phase 5, T033). | plan T033 |
-| Transaction metric | Per-status counters (`processed`, `rejected`, `pendingReference`) and processing latency histogram (`wageringProcessingSeconds`) recorded at transaction completion (Phase 5, T033). | plan T033 |
+| Transaction metric | Per-status counters (`processed`, `rejected`, `pendingReference`) and processing latency histogram (`wageringProcessingSeconds`) recorded at transaction completion (Phase 5, T033); Prometheus instruments served at `GET /metrics` since Phase 8 (T046). | plan T033 |
 
 ## Technical Terms and Acronyms
 
 | Term | Definition |
 |---|---|
-| Inbox | Persistent dedup record per `(consumerName, messageId)`; prevents duplicate effects from redelivery. `inbox_message` table + repository exist (Phase 3); rows are written by `SubmitTransactionUseCase` for SQS ingress since Phase 4 (`src/modules/wagering/submit-transaction.use-case.ts`, step 1); the SQS consumer that invokes it is planned (Phase 6). |
-| Outbox | Event rows written in the same SQL transaction as the financial change; a worker publishes them post-commit. `outbox_message` table + repositories (incl. `claimDueBatch`) exist (Phase 3) and the Phase 4 use cases enqueue rows in the same transaction; the publisher worker is planned (Phase 7). |
+| Inbox | Persistent dedup record per `(consumerName, messageId)`; prevents duplicate effects from redelivery. `inbox_message` table + repository exist (Phase 3); rows are written by `SubmitTransactionUseCase` for SQS ingress since Phase 4 (`src/modules/wagering/submit-transaction.use-case.ts`, step 1); the SQS consumer that invokes it landed in Phase 6 (`src/messaging/wager-transaction.consumer.ts`). |
+| Outbox | Event rows written in the same SQL transaction as the financial change; a worker publishes them post-commit. `outbox_message` table + repositories (incl. `claimDueBatch`) exist (Phase 3), the Phase 4 use cases enqueue rows in the same transaction, and the publisher worker has published them since Phase 7 (`src/workers/outbox-publisher.worker.ts`). |
 | At-least-once | Delivery guarantee assumed everywhere: duplicates are normal, effects must be idempotent. |
 | Lost update | Concurrent writes silently overwriting each other; prevented by the chosen concurrency strategy per `walletId`. |
 | Optimistic locking | Conflict detection via `version` increment with bounded retry. |
@@ -40,13 +40,13 @@ specification (`../README.md`) and [architecture.md](architecture.md).
 | DLQ | Dead-letter queue (`wager-transactions-dlq.fifo`) for messages exceeding the attempt limit. |
 | FIFO queue | SQS queue with ordering/dedup by `MessageGroupId` — an optimization only, never the consistency guarantee. |
 | IaC | Infrastructure as Code — version-controlled infrastructure definitions; local only today (`docker-compose.yml`), no cloud IaC yet. |
-| IdP | Identity Provider (OIDC) used for HTTP API authentication — **Keycloak** (decided 2026-10-06, plan T043; spec §2). |
+| IdP | Identity Provider (OIDC) used for HTTP API authentication — **Keycloak** (decided 2026-10-06; realm + guards implemented Phase 8, plan T043/T044; spec §2). |
 | OIDC | OpenID Connect — protocol layered on OAuth 2.0 for identity. |
 | ADR | Architecture Decision Record, stored in [decisions/](decisions/). |
 | Canonical JSON | Key-sorted JSON used to compute `payloadHash`; transport metadata excluded. |
 | ISO-4217 | Currency code standard used by `Money.currency` (e.g. `BRL`). |
-| Lock-conflict metric | `wageringLockConflictsTotal` counter incremented when `findByIdForUpdate` wait exceeds 50ms (Phase 5, T033). |
-| Transaction metrics | `wageringTxTotal{processed,rejected,pendingReference}` counters and `wageringProcessingSeconds` histogram recorded at transaction completion (Phase 5, T033). |
+| Lock-conflict metric | `wageringLockConflictsTotal` counter incremented when `findByIdForUpdate` wait exceeds 50ms (Phase 5, T033); exported by `GET /metrics` since Phase 8 (T046). |
+| Transaction metrics | `wageringTxTotal{processed,rejected,pendingReference}` counters and `wageringProcessingSeconds` histogram recorded at transaction completion (Phase 5, T033); exported by `GET /metrics` since Phase 8 (T046). |
 
 ## Naming Conventions
 
@@ -56,7 +56,9 @@ specification (`../README.md`) and [architecture.md](architecture.md).
   (`WagerTransactionKind.Bet = "BET"`).
 - **Idempotency key**: required `Idempotency-Key` header; spec §9 recommends the value `{providerId}:{externalTransactionId}`.
 - **Queues**: `wager-transactions.fifo` / `wager-transactions-dlq.fifo`.
-- **Health endpoints**: `/health/live`, `/health/ready`.
+- **Health endpoints**: `/health/live`, `/health/ready` (readiness body `{postgres, sqs}`).
+- **Metrics endpoint**: `GET /metrics` (Prometheus text, `@Public()`).
+- **Correlation header**: `x-correlation-id` (validated `/^[A-Za-z0-9._-]{1,128}$/`, echoed; generated when absent/invalid).
 - **Docs files**: kebab-case; one file per module/feature/ADR in its `docs/` subfolder.
 - **Disambiguation (overloaded words)**:
   - **Transaction** — always `WagerTransaction` (business op); SQL transactions are

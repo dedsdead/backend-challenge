@@ -98,13 +98,18 @@ now has a production consumer — `src/modules/wagering/submit-transaction.use-c
 (used there for per-type reversal checks) and `countByWallet`
 (used by `src/modules/wallets/reconciliation.service.ts`).
 
+*Implemented since this pattern was written (Phases 5–7, 2026-10-08/09):* the Phase 5
+concurrency suite exists (`tests/concurrency/{hot-wallet,duplicate-flood,multi-instance}.spec.ts`);
+`src/workers/outbox-publisher.worker.ts` calls `outboxRepo.claimDueBatch(tx, ...)`
+**inside** `em.transactional(...)` (lines 87–98) — the pattern's transaction-bound claim
+now has a production consumer, not just tests; and
+`src/workers/pending-reference.worker.ts` persists `reference_attempts` /
+`reference_next_attempt_at` on each retry (`scheduleRetry`, raw
+`UPDATE wager_transaction SET reference_attempts = ?, reference_next_attempt_at = ?`
+at lines 326–331 — deliberately *not* an entity-level write: those columns are not on
+the domain `WagerTransaction`, so `em.assign`/`patch()` is not involved).
+
 *Not implemented — do not assume they exist:*
-- **Phase 7 (T038)** outbox publisher will call `claimDueBatch` **inside** `em.transactional(...)`
-  (or `begin()`/`rollback()`); today only the tests exercise both branches.
-- **Phase 7 reprocessor** will write `referenceAttempts`/`referenceNextAttemptAt` at the entity
-  level — the spec's `patch()` helper (`repositories.spec.ts:138–146`) is the stand-in for that worker.
-- **Phase 5 concurrency suite** (plan T030–T033) that proves contention behavior of the
-  Phase 4 lock usage is still unwritten.
 - Injecting `SqlEntityManager` directly via `@Inject(SqlEntityManager)` is possible once
   `driver: PostgreSqlDriver` is on `forRootAsync` (bootstrap pattern G3) — **not adopted**; the
   convention is `@Inject(EntityManager)` + cast at the raw-SQL call site.

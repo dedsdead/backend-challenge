@@ -265,7 +265,7 @@ create `OPENING`.
 | 5 | Concurrency Hardening | Phase 4 | ✅ Completed |
 | 6 | SQS Ingestion | Phase 4 | ⬜ Pending |
 | 7 | Outbox & Reference Workers | Phase 6 | ✅ Completed |
-| 8 | Auth & Observability | Phase 4 | ⬜ Pending |
+| 8 | Auth & Observability | Phase 4 | ✅ Completed |
 | 9 | Resilience Suite & Graded Docs | Phases 5–8 | ⬜ Pending |
 
 ---
@@ -808,14 +808,14 @@ out-of-order references resolved with bounded retries.
 
 ### Phase 8: Auth & Observability
 
-**Status**: ⬜ Pending
+**Status**: ✅ Completed
 **Objective**: Keycloak OIDC on the API (health open), structured
 redacted logs, prometheus metrics, full readiness.
 **Dependencies**: Phase 4
 
 **Tasks**:
 
-- [ ] T043 [US8] Create `keycloak/realm-export.json`
+- [x] T043 [US8] Create `keycloak/realm-export.json`
   - realm `wagering`; client `wagering-api` (bearer-only, issuer
     `http://localhost:8080/realms/wagering`); roles `transact:write`,
     `transact:read`; test users `provider-client` (both roles), `operator`
@@ -824,21 +824,21 @@ redacted logs, prometheus metrics, full readiness.
     (`transact:write` only) — the two single-role users exist so T048 can prove
     both 403 directions;
     direct-grant enabled for local testing
-- [ ] T044 [US8] Create `src/auth/jwt.guard.ts` + `src/auth/public.decorator.ts` + `src/auth/roles.guard.ts`
+- [x] T044 [US8] Create `src/auth/jwt.guard.ts` + `src/auth/public.decorator.ts` + `src/auth/roles.guard.ts`
   - global `APP_GUARD`: `@Public()` skips; otherwise require `Authorization: Bearer`
     validated against `KEYCLOAK_ISSUER` JWKS (`iss` + `aud` + `exp`), fail-closed on
     JWKS errors → 401 `UNAUTHORIZED` (never 500 → business path)
   - `@Roles('transact:write')` on all POSTs, `@Roles('transact:read')` on GETs;
     missing required role → **403 `ROLE_FORBIDDEN`**; health controllers and
     `GET /metrics` stay `@Public()` (AC-16, T046)
-- [ ] T045 [US8] Create `src/observability/logger.ts` (pino) and wire in `src/main.ts`
+- [x] T045 [US8] Create `src/observability/logger.ts` (pino) and wire in `src/main.ts`
   - base bindings `service: 'wagering-processor'`; middleware assigns/propagates
     `correlationId` (honors inbound `x-correlation-id`, else uuid) into
     AsyncLocalStorage and the response header; child loggers in use
     case/consumer/workers bind `transactionId`, `walletId`, `providerId`, `messageId`
   - `redact` paths: `req.headers.authorization`, `*.data`, `*.payload`, `*.body` — no
     full financial payloads (§12)
-- [ ] T046 [US8] Complete `src/observability/metrics.service.ts` (prom-client; extends
+- [x] T046 [US8] Complete `src/observability/metrics.service.ts` (prom-client; extends
   the Phase 5 stub)
   - `GET /metrics` (`@Public`): counters `wagering_tx_total{status}`,
     `wagering_duplicates_total`, `wagering_sqs_retries_total`,
@@ -847,11 +847,11 @@ redacted logs, prometheus metrics, full readiness.
     age seconds); histogram `wagering_processing_seconds`
   - instrument: use case (status/duration/duplicates), consumer (retries/DLQ),
     outbox worker (lag), reconciliation
-- [ ] T047 [US8] Extend readiness in `src/health/health.service.ts`
+- [x] T047 [US8] Extend readiness in `src/health/health.service.ts`
   - add `getQueueAttributes` on main + DLQ; response `{ postgres, sqs }`; any
     failure → 503 (completes T007). Keycloak is deliberately **not** probed —
     spec §9 defines ready = "PostgreSQL and SQS reachable" (clarified 2026-10-06)
-- [ ] T048 [US8] Create integration tests `tests/integration/auth-observability.spec.ts` (AC-16)
+- [x] T048 [US8] Create integration tests `tests/integration/auth-observability.spec.ts` (AC-16)
   - health endpoints and `GET /metrics` 200 without token; `POST /wallets` without
     token or with wrong-audience token → 401 `UNAUTHORIZED`; with valid token → 201;
     `read-only-client` on POST → 403 `ROLE_FORBIDDEN`; `write-only-client` on GET →
@@ -995,13 +995,13 @@ redacted logs, prometheus metrics, full readiness.
 - [ ] TypeScript validation passes (build only when explicit)
 
 ### Phase 8: Auth & Observability
-- [ ] T043 [US8] Keycloak realm export `keycloak/realm-export.json`
-- [ ] T044 [US8] JWT + roles guards (`@Public`, fail-closed)
-- [ ] T045 [US8] Pino logger + correlationId + redaction
-- [ ] T046 [US8] Prometheus metrics + instrumentation (extends T033 stub)
-- [ ] T047 [US8] Readiness incl. SQS (completes T007)
-- [ ] T048 [US8] Auth/observability integration tests (AC-16)
-- [ ] TypeScript validation passes (build only when explicit)
+- [x] T043 [US8] Keycloak realm export `keycloak/realm-export.json`
+- [x] T044 [US8] JWT + roles guards (`@Public`, fail-closed)
+- [x] T045 [US8] Pino logger + correlationId + redaction
+- [x] T046 [US8] Prometheus metrics + instrumentation (extends T033 stub)
+- [x] T047 [US8] Readiness incl. SQS (completes T007)
+- [x] T048 [US8] Auth/observability integration tests (AC-16)
+- [x] TypeScript validation passes (build only when explicit)
 
 ### Phase 9: Resilience Suite & Graded Docs
 - [ ] T049 [US9] Crash-recovery integration tests
@@ -1566,3 +1566,184 @@ UUIDs for `roundId`/`gameId` (decision inherited from Phase 3 data model).
 **Deferred (unchanged):** idempotency-key `(provider_id, key)` scoping, read-path unwrap, single-flush perf, `exactOptionalPropertyTypes`, test-harness helper extraction, outbox `fromEvent`, controller discriminated union, Phase 8 wallet scoping, Phase 6 SQS consumer, Phase 7 workers.
 
 **Files changed (incremental):** `src/common/http/{exception.filter.ts,validation-error.ts}`, `src/common/dto/money.dto.ts`, `src/app.module.ts`, `src/main.ts`, `src/modules/wagering/submit-transaction.use-case.ts`, `src/modules/wagering/dto/submit-transaction.dto.ts`, `src/modules/wallets/dto/create-wallet.dto.ts`, `src/modules/wallets/wallets.service.ts`, `src/modules/wallets/reconciliation.service.ts`, `src/modules/wallets/dto/reconciliation-response.dto.ts` (deleted), `src/domain/failure-codes.ts`, `src/domain/errors.ts` (import), `src/database/entities/wallet-ledger-entry.entity.ts`, `src/database/migrations/Migration20261008055955_AddLedgerKeysetIndex.ts`, `src/database/repositories/{interfaces.ts,mikro-orm.repositories.ts}`, `tests/helpers/test-db-lock.ts` (new), `tests/integration/*.spec.ts` (lock), `tests/unit/common/http/exception.filter.spec.ts`, `tests/unit/domain/failure-codes.spec.ts`.
+
+---
+
+### 2026-10-09 — Phase 8 (Auth & Observability) completed (T043–T048)
+
+**Tasks completed (fully):** T043, T044, T045, T046, T047, T048
+**Tasks completed (partially):** none
+**Tasks not executed in this run:** none (all Phase 8 tasks)
+
+**Key implementation notes:**
+- **T043** — `keycloak/realm-export.json` rewritten as a single realm object for
+  realm `wagering`: realm roles `transact:read`/`transact:write`; client
+  `wagering-api` (bearer-only) + client `wagering-cli` (public, direct-grant for
+  local tests); 11 client scopes including extracted Keycloak builtin scopes
+  (`basic`/`roles`/`profile`/`email`/`web-origins`/`acr`/`address`/`phone`/
+  `offline_access`/`microprofile-jwt`) and hand-authored `audience-wagering-api`
+  with protocolMapper `oidc-audience-mapper` (`included.client.audience=
+  wagering-api`, `access.token.claim=true`); 4 users `provider-client` /
+  `operator` / `read-only-client` / `write-only-client` with the planned realm
+  roles, password `wagering-dev-123`. Gotchas discovered: Keycloak 26.3+ moved
+  `sub` into builtin scope `basic` (realm export must include builtin scopes or
+  tokens lose claims); mapper JSON needs BOTH `protocol` and `protocolMapper`
+  keys; audience mapper provider id is `oidc-audience-mapper` (not
+  `oidc-audience`); realm export must be a realm object, not an array;
+  re-import requires `docker compose up -d --force-recreate keycloak` (no
+  volume). Live-verified: tokens for all 4 users contain `sub`,
+  `preferred_username`, `aud=wagering-api`, correct `realm_access.roles`.
+- **T044** — `src/auth/jwt.guard.ts` (jose remote JWKS from
+  `{issuer}/protocol/openid-connect/certs`, `jwtVerify` with issuer+audience,
+  fail-closed 401 `UNAUTHORIZED`, `@Public()` skip, sets `req.user`),
+  `src/auth/roles.guard.ts` (`realm_access.roles` vs `@Roles`, fail-closed 403
+  `ROLE_FORBIDDEN` including missing-`@Roles`), `src/auth/roles.decorator.ts`;
+  both registered as `APP_GUARD` in `src/app.module.ts` (JwtGuard then
+  RolesGuard). `@Roles('transact:write')` on all POSTs, `@Roles('transact:read')`
+  on all GETs in `wallets.controller.ts` and `wagering.controller.ts`; health and
+  metrics controllers stay `@Public()`. New dependency `jose@6.2.12`. Unit tests
+  with a local JWKS HTTP server: `tests/unit/auth/jwt.guard.spec.ts` (9 tests:
+  public skip, missing/non-Bearer header, valid token, `req.user` population,
+  wrong audience, expired, wrong issuer, unreachable JWKS fail-closed) +
+  `tests/unit/auth/roles.guard.spec.ts` (5 tests) — 14/14 pass.
+- **T045** — `src/observability/logger.ts` (pino, `SERVICE_NAME=
+  wagering-processor`, redaction of `req.headers.authorization`/
+  `*.headers.authorization` + bare and nested `data`/`payload`/`body`,
+  `PinoLoggerService` Nest `LoggerService` adapter);
+  `src/observability/correlation.ts` (ALS `runWithCorrelationId`/
+  `getCorrelationId` + `correlationIdMiddleware` validating/echoing
+  `x-correlation-id`); `ObservabilityModule` applies the middleware app-wide via
+  `forRoutes` catch-all path (Express 5); `main.ts` uses
+  `logger: new PinoLoggerService(), bufferLogs: true`. Log bindings:
+  `wager-transaction.consumer.ts` (messageId/providerId/walletId/correlationId),
+  rejection warn in `submit-transaction.use-case.ts`
+  (transactionId/walletId/providerId/failureCode, no payloads),
+  `pending-reference.worker.ts` bindings; dead `childLogger` removed;
+  `bootstrap.spec` gained correlation-header assertions (generated uuid echo,
+  custom cid echo, malformed cid not echoed).
+- **T046** — `src/observability/metrics.service.ts` (own prom-client `Registry`,
+  `collectDefaultMetrics`, facade shaped to the Phase 5 stub so call sites are
+  unchanged), `src/observability/metrics.controller.ts` (GET `/metrics`,
+  `@Public`, prom text/plain), `src/observability/observability.module.ts`;
+  `src/common/metrics/metrics.ts` now re-exports the facade. Full instrument set
+  present: `wagering_tx_total{status}`, `wagering_duplicates_total`,
+  `wagering_sqs_retries_total`, `wagering_dlq_received_total`,
+  `wagering_reconciliation_divergences_total`, `wagering_lock_conflicts_total`,
+  gauge `wagering_outbox_lag`, histogram `wagering_processing_seconds`.
+  New instrumentation this run: duplicates at 3 replay paths in
+  `submit-transaction.use-case.ts`, retries + DLQ in
+  `wager-transaction.consumer.ts`, outbox lag via `outboxRepo.findPending(1)` in
+  `outbox-publisher.worker.ts` (status/duration/lock-conflict/reconciliation call
+  sites already existed from T025/T029/T033 and now hit real instruments).
+  Tests: `tests/unit/observability/metrics.service.spec.ts`,
+  `tests/integration/metrics.spec.ts` (3 pass, live counters incl.
+  `wagering_tx_total{status="processed"}`), plus T046 assertions added to
+  `submit-transaction.use-case.spec.ts` (duplicates) and
+  `outbox-publisher.worker.spec.ts` (outbox lag ≥ 80s).
+- **T047** — `src/health/sqs-prober.ts` (`SQS_PROBER` token, `SqsQueueProber`
+  using `GetQueueAttributesCommand` on main + DLQ); `HealthService.ready()` now
+  returns `{postgres:'ok', sqs:'ok'}` with 503 `ServiceUnavailableException` on
+  either probe failure; `health.module` factory injects `ConfigService` (its
+  absence previously caused a silent `process.exit(1)` during
+  `NestFactory.create`). Tests: `tests/unit/health/sqs-prober.spec.ts`,
+  `health.service.spec` updated, `bootstrap.spec` 6 pass.
+- **T048** — `tests/helpers/keycloak-token.ts` (direct-grant token fetch +
+  expiry-aware cache for the 4 realm users, client `wagering-cli`);
+  `tests/integration/auth-observability.spec.ts` 13 pass: public routes tokenless
+  (`/health/live`, `/metrics`), 401 `UNAUTHORIZED` for missing header,
+  non-Bearer, garbage, tampered-signature, tokenless GET/POST; 403
+  `ROLE_FORBIDDEN` read-only on POST `/wallets` + POST `/wagering/transactions`
+  and write-only on GET wallet/ledger; operator/read-only/write-only allowed
+  directions return 201/200; JSON log fixture captures pino output into an
+  in-memory destination and asserts a warn line with `cid=authobs-cid-1` and that
+  no line contains `'authorization'`, `'Bearer '` or the raw token.
+  Previously-tokenless suites `tests/integration/{wallets.http,wagering.http,
+  http-api}.spec.ts` now authenticate every request via a suite-local
+  `authedFetch` wrapper with an operator token (`beforeAll` awaits
+  `bearer('operator')`); stale "runs without tokens" comments updated;
+  `bootstrap.spec` and `metrics.spec` needed no auth changes (public routes).
+
+**Unplanned changes:**
+- `src/health/health.module.ts` — factory now injects `ConfigService`; required
+  because the T047 prober needs queue URLs and the missing injection caused a
+  silent boot failure.
+- `src/app.module.ts` — `APP_GUARD` registration lines + `ObservabilityModule`
+  import (named by T044/T045 but listed here as cross-cutting wiring).
+- `tests/helpers/keycloak-token.ts` — token helper not named by the plan
+  (T048 support); also consumed by the three retrofitted HTTP suites.
+- `tests/integration/{wallets.http,wagering.http,http-api}.spec.ts` — every
+  request now carries an operator token (unavoidable consequence of the global
+  guards; the plan did not name these files under T048).
+- `tests/integration/{submit-transaction.use-case,outbox-publisher.worker}.spec.ts`
+  — T046 counter/gauge assertions appended (coverage for instruments not asserted
+  by `metrics.spec.ts`).
+- `tests/unit/messaging/*`, `tests/unit/observability/*`, `tests/unit/keycloak/*`
+  — unit suites beyond the plan's named integration specs.
+- `package.json`/`bun.lock` — `jose@6.2.12` runtime dependency.
+
+**Implementation deviations:**
+- T043 — plan says "client `wagering-api` … direct-grant enabled for local
+  testing"; a bearer-only client cannot do direct grant, so the direct grant
+  lives on a second public client `wagering-cli` (users/roles/scopes as
+  specified; token helper targets `wagering-cli`).
+- T044 — the `@Roles` decorator file is `src/auth/roles.decorator.ts` (plan
+  names only `jwt.guard.ts`/`public.decorator.ts`/`roles.guard.ts`); and
+  `public.decorator.ts` was already created in Phase 1 (T007 — see the Phase 1
+  Execution Log unplanned-changes note), so T044 did not re-create it.
+- T045 — redaction covers **bare and nested** `data`/`payload`/`body` (plan
+  listed only the `*.`-prefixed nested forms) — a superset; correlation
+  middleware is applied app-wide from `ObservabilityModule` via a `forRoutes`
+  catch-all path (Express 5 routing) rather than a `main.ts`-registered
+  middleware.
+- T046 — plan wording says metrics.service.ts "extends the Phase 5 stub";
+  implemented the other way around: `metrics.service.ts` owns the registry and
+  instruments, and the Phase 5 stub file `src/common/metrics/metrics.ts` became a
+  one-line re-export facade so all existing call sites (use case,
+  reconciliation, consumer, workers, tests) are unchanged.
+- T047 — implemented via an injected `SqsQueueProber` (`GetQueueAttributes` on
+  main + DLQ as specified) instead of inline service methods; response contract
+  `{postgres, sqs}` and 503-on-failure as specified.
+- T048 — two assertions named inside the auth-observability spec live in sibling
+  suites: the **wrong-audience token → 401** case is in
+  `tests/unit/auth/jwt.guard.spec.ts` (guard-level, local JWKS), and
+  **"/metrics exposes a counter after a submit"** is asserted in
+  `tests/integration/metrics.spec.ts` (live registry counters) — the
+  auth-observability spec asserts `/metrics` is publicly reachable but does not
+  re-assert counter deltas. Coverage exists; placement differs from plan text.
+
+**Verification evidence (2026-10-09, fresh):**
+- `bun run validate` → exit 0 (must run with `$env:GOMEMLIMIT='1200MiB'` to
+  avoid tsgo OOM on the 8GB dev machine).
+- Unit: **249 pass / 0 fail** (26 files).
+- Integration suites green when run individually: `auth-observability` 13,
+  `wallets.http` 23, `wagering.http` 23, `http-api` 8, `bootstrap` 6,
+  `metrics` 3, `sqs-ingress` 7, `submit-transaction.use-case` 27, `workers` 4,
+  `outbox-publisher` 2, `pending-reference` 5, `repositories` 10, `schema` 25,
+  `wallets.service` 7; concurrency 3; `realm-export` 8.
+- Live Keycloak: tokens verified for all 4 users (`sub`, `aud=wagering-api`,
+  correct `realm_access.roles`).
+
+**Files changed:** `keycloak/realm-export.json`, `package.json`, `bun.lock`,
+`src/app.module.ts`, `src/main.ts`, `src/auth/{jwt.guard,roles.guard,roles.decorator}.ts`,
+`src/observability/{logger,correlation,metrics.service,metrics.controller,observability.module}.ts`,
+`src/common/metrics/metrics.ts`, `src/health/{health.module,health.service,sqs-prober}.ts`,
+`src/messaging/wager-transaction.consumer.ts`,
+`src/modules/wagering/submit-transaction.use-case.ts`,
+`src/modules/wagering/wagering.controller.ts`,
+`src/modules/wallets/wallets.controller.ts`,
+`src/workers/{outbox-publisher,pending-reference}.worker.ts`,
+`tests/helpers/keycloak-token.ts`,
+`tests/unit/auth/{jwt.guard,roles.guard}.spec.ts`,
+`tests/unit/observability/metrics.service.spec.ts`,
+`tests/unit/health/{sqs-prober,health.service}.spec.ts`,
+`tests/unit/keycloak/realm-export.spec.ts`,
+`tests/integration/{auth-observability,metrics,bootstrap}.spec.ts`,
+`tests/integration/{wallets.http,wagering.http,http-api}.spec.ts`,
+`tests/integration/{submit-transaction.use-case,outbox-publisher.worker}.spec.ts`,
+this plan.
+
+**Documentation updates:** this plan only — Phase 8 status ✅, phase task
+checkboxes, Master Checklist Phase 8 rows, status-table row 8, and this
+Execution Log entry. Phases 6/7 were deliberately NOT modified by this sync
+(out of scope — their checkbox/status inconsistencies need their own
+verification pass).

@@ -67,8 +67,8 @@ Phases 2–9.
 
 - **Runtime**: Bun `1.4.2` (`bun --version`), scripts `dev: bun run src/main.ts`,
   `validate: tsc --noEmit` (TypeScript `7.0.2`), `test: bun test` with
-  `test:unit` / `test:integration` / `test:concurrency` (directory exists but stays empty
-  until Phase 5) splits.
+  `test:unit` / `test:integration` / `test:concurrency`
+  (`tests/concurrency/` holds 3 specs since Phase 5) splits.
 - **`tsconfig.json`**: `experimentalDecorators: true`, `emitDecoratorMetadata: true`,
   `module: esnext`, `moduleResolution: bundler`, `types: ["bun"]`, `strict`,
   `noUncheckedIndexedAccess`, `include: [src, tests]`.
@@ -87,7 +87,8 @@ Phases 2–9.
   and `{ provide: APP_FILTER, useExisting: HttpExceptionFilter }` (with the class also in
   `providers`) — so any app built from `AppModule` (including the integration harness)
   gets the real wiring; `main.ts` no longer registers globals via `useGlobal*`.
-- **`src/main.ts`**: `NestFactory.create(AppModule, { bufferLogs: true })`,
+- **`src/main.ts`**: `NestFactory.create(AppModule, { logger: new PinoLoggerService(),
+  bufferLogs: true })` (pino adapter from `src/observability/logger.ts`, Phase 8/T045),
   `enableShutdownHooks()`, `listen(config.getOrThrow<number>('PORT'),
   config.getOrThrow<string>('HOST'))` (validated values via `ConfigService` — never raw
   `process.env`; `HOST` defaults to `127.0.0.1` so the dev server is loopback-only),
@@ -104,19 +105,31 @@ Phases 2–9.
   (4566, `SERVICES: sqs`), `quay.io/keycloak/keycloak:26.8` (`start-dev --import-realm`,
   mounts `./keycloak/realm-export.json`); all three have healthchecks and bind
   `127.0.0.1` only; no app container (app runs on host via Bun).
-- **Tests**: 31 spec files pass (353 tests / 1222 expects as of 2026-10-08; current counts
-  live in the plan Execution Log) — `tests/unit/config/env.validation.spec.ts`,
+- **Tests**: baseline 2026-10-09 (Phase 8): `bun run validate` exit 0, unit 249 pass /
+  0 fail, all integration suites green when run individually, concurrency (3 specs)
+  pass / 0 fail (earlier snapshot 2026-10-08: 31 spec files / 353 tests / 1222 expects;
+  re-run for current totals). Suites: `tests/unit/config/env.validation.spec.ts`,
   `tests/unit/health/health.service.spec.ts` (services constructed directly with a mocked EM,
   no DI container), `tests/unit/common/http/exception.filter.spec.ts` (pinned
   `{statusCode, code, message, ...}` contract, domain-error mapping, 503 contract,
   unknown/http-errors handling, 5xx logging/credential redaction, `headersSent`),
   `tests/integration/bootstrap.spec.ts` (global wiring, health, Phase 4 error
-  contract on 404); plus
+  contract on 404, plus correlation-id middleware and readiness `{postgres, sqs}` —
+  Phase 8), plus
   Phase 2 `tests/unit/domain/*.spec.ts` (9 files), Phase 3
   `tests/integration/schema.spec.ts`, `tests/integration/repositories.spec.ts`,
-  `tests/integration/entities/*.spec.ts` (4 files), and Phase 4
+  `tests/integration/entities/*.spec.ts` (4 files), Phase 4
   `tests/integration/{http-api,wallets.http,wagering.http,wallets.service,submit-transaction.use-case}.spec.ts`
-  with `tests/unit/modules/`, `tests/unit/common/dto/`, `tests/unit/common/idempotency/`.
+  with `tests/unit/modules/`, `tests/unit/common/dto/`, `tests/unit/common/idempotency/`,
+  Phase 6 `tests/integration/sqs-ingress.spec.ts` +
+  `tests/unit/messaging/wager-transaction.consumer.spec.ts`, Phase 7
+  `tests/integration/{outbox-publisher,pending-reference}.worker.spec.ts` +
+  `tests/integration/workers.spec.ts`, and Phase 8
+  `tests/integration/{auth-observability,metrics}.spec.ts` +
+  `tests/unit/auth/{jwt.guard,roles.guard}.spec.ts`,
+  `tests/unit/observability/*.spec.ts`, `tests/unit/health/sqs-prober.spec.ts`,
+  `tests/unit/keycloak/realm-export.spec.ts`
+  (token helper `tests/helpers/keycloak-token.ts`).
 
 ## Planned / Optional Extensions (If Applicable)
 
@@ -133,9 +146,15 @@ construct repositories per transaction inside `em.transactional(...)` —
 repositories are never shared singletons (plan Execution Log, 2026-10-08; do not
 "unwire" reads from transactions).
 
+Also (Phase 8, 2026-10-09): `@Public()` (`src/auth/public.decorator.ts`) is now
+consumed by the global JWT guard (`JwtGuard` + `RolesGuard` as `APP_GUARD` in
+`src/app.module.ts`), and `GET /health/ready` probes SQS in addition to PostgreSQL
+(`{postgres:'ok', sqs:'ok'}`, `src/health/sqs-prober.ts`) — `HealthService` grew a
+second, `SQS_PROBER`-injected constructor dependency. The app boots with the pino
+`PinoLoggerService` and `src/observability/` adds the app-wide correlation
+middleware and `GET /metrics`.
+
 *Not implemented — do not assume they exist:*
-- **Phase 8**: `@Public()` consumed by a global JWT guard; `SQS` probe added to `GET /health/ready`.
-- **Phase 5**: `tests/concurrency/` content for the `test:concurrency` script (directory exists, empty).
 - `MikroOrmModule.forFeature(...)` is not used — repositories take the injected
   `EntityManager` directly; new entities are registered by adding them to the `entities`
   array in `src/database/mikro-orm.config.ts` (the CLI diffs against that same array).
@@ -248,19 +267,27 @@ Key points:
 ### Step 4: Injecting the EntityManager — any new `@Injectable()` service
 
 ```ts
-// src/health/health.service.ts
+// src/health/health.service.ts (current shape; second dependency added Phase 8 / T047)
 import { Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/core';   // VALUE import — not `import type`
+import { SQS_PROBER } from './sqs-prober';
 
 @Injectable()
 export class HealthService {
-  constructor(@Inject(EntityManager) private readonly em: EntityManager) {}
-  async ready(): Promise<{ postgres: 'ok' }> {
+  constructor(
+    @Inject(EntityManager) private readonly em: EntityManager,   // L7
+    @Inject(SQS_PROBER) private readonly sqs: SqsProber,
+  ) {}
+  async ready(): Promise<{ postgres: 'ok'; sqs: 'ok' }> {
     try { await this.em.getConnection().execute('SELECT 1'); }
     catch (error) {
       throw new ServiceUnavailableException('PostgreSQL unreachable', { cause: error });
     }
-    return { postgres: 'ok' };
+    try { await this.sqs.probe(); }
+    catch (error) {
+      throw new ServiceUnavailableException('SQS unreachable', { cause: error });
+    }
+    return { postgres: 'ok', sqs: 'ok' };
   }
 }
 ```
