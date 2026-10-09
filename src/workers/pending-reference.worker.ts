@@ -163,7 +163,11 @@ export class PendingReferenceWorker {
     }
 
     // Reference is valid - apply the transaction
-    this.logger.debug('Reference validation passed, processing transaction');
+    this.logger.debug('Reference validation passed, processing transaction', {
+      transactionId: pendingTx.id,
+      walletId: pendingTx.walletId,
+      providerId: pendingTx.providerId,
+    });
     const wallet = await wallets.findByIdForUpdate(pendingTx.walletId);
     if (!wallet) {
       await this.rejectWithFailureCode(em, pendingTx, FailureCode.WalletNotFound, now);
@@ -213,6 +217,12 @@ export class PendingReferenceWorker {
     pendingTx.markProcessed(reference.id, now);
     pendingTx.setResultBalance(observedBalance);
     await transactions.save(pendingTx);
+
+    this.logger.log('Pending reference resolved', {
+      transactionId: pendingTx.id,
+      walletId: pendingTx.walletId,
+      providerId: pendingTx.providerId,
+    });
 
     // Emit events
     const processed = WagerTransactionProcessed.from({
