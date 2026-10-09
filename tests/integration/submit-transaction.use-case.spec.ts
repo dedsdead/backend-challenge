@@ -748,6 +748,29 @@ describe('SubmitTransactionUseCase happy path (T026 cycle A)', () => {
       expect(txCount[0]!.n).toBe(1);
     });
 
+    it('counts idempotent replays toward wagering_duplicates_total (T046)', async () => {
+      const { metrics } = await import('../../src/common/metrics/metrics');
+      const { id: walletId, playerId } = await newWallet();
+      const cmd = {
+        providerId: 'prov-1',
+        externalTransactionId: `ext-${v4()}`,
+        walletId,
+        playerId,
+        roundId: v4(),
+        gameId: v4(),
+        kind: WagerTransactionKind.Bet,
+        amount: '100.00',
+        currency: 'BRL',
+        idempotencyKey: `idem-${v4()}`,
+        ingress: { kind: 'http' as const },
+      };
+
+      const before = metrics.wageringDuplicatesTotal.count;
+      await submit(cmd);
+      await submit(cmd);
+      expect(metrics.wageringDuplicatesTotal.count).toBe(before + 1);
+    });
+
     it('throws IdempotencyConflictError for the same key with a different payload', async () => {
       const { id: walletId, playerId } = await newWallet();
       const cmd = {

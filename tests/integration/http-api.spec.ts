@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { v4 } from 'uuid';
 import { acquireTestLock, releaseTestLock } from '../helpers/test-db-lock';
+import { bearer } from '../helpers/keycloak-token';
 
 // T029 — end-to-end acceptance walk over spec §9 endpoints against real PG.
-// Phase 4 runs without tokens (C3/T029b): guards arrive in plan T044 (Phase 8).
+// Requests carry a real Keycloak token (T044/T048); 401/403 behavior is
+// covered by auth-observability.spec.
 
 process.env.DATABASE_URL ??= 'postgres://postgres:local@localhost:5432/wagering';
 process.env.SQS_QUEUE_URL ??= 'http://localhost:4566/000000000000/wager-transactions.fifo';
@@ -21,8 +23,19 @@ interface WalletBody {
 describe('HTTP API end-to-end (T029)', () => {
   let baseUrl = '';
   let truncate: () => Promise<void> = async () => {};
+  let auth: Record<string, string> = {};
+
+  const authedFetch = (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> =>
+    globalThis.fetch(input, {
+      ...init,
+      headers: { ...((init?.headers ?? {}) as Record<string, string>), ...auth },
+    });
 
   beforeAll(async () => {
+    auth = await bearer('operator');
     await acquireTestLock();
     const { NestFactory } = await import('@nestjs/core');
     const { AppModule } = await import('../../src/app.module');
@@ -67,7 +80,7 @@ describe('HTTP API end-to-end (T029)', () => {
   }, 20_000);
 
   const createWallet = async (amount = '1000.00', currency = 'BRL'): Promise<WalletBody> => {
-    const res = await fetch(`${baseUrl}/wallets`, {
+    const res = await authedFetch(`${baseUrl}/wallets`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -95,7 +108,7 @@ describe('HTTP API end-to-end (T029)', () => {
   });
 
   const post = (body: Record<string, unknown>, idempotencyKey?: string) =>
-    fetch(`${baseUrl}/wagering/transactions`, {
+    authedFetch(`${baseUrl}/wagering/transactions`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -105,13 +118,13 @@ describe('HTTP API end-to-end (T029)', () => {
     });
 
   const getWallet = async (walletId: string): Promise<WalletBody> => {
-    const res = await fetch(`${baseUrl}/wallets/${walletId}`);
+    const res = await authedFetch(`${baseUrl}/wallets/${walletId}`);
     expect(res.status).toBe(200);
     return (await res.json()) as WalletBody;
   };
 
   const getLedger = async (walletId: string, query = '') => {
-    const res = await fetch(`${baseUrl}/wallets/${walletId}/ledger${query}`);
+    const res = await authedFetch(`${baseUrl}/wallets/${walletId}/ledger${query}`);
     expect(res.status).toBe(200);
     return (await res.json()) as {
       entries: { id: string; direction: string; amount: string }[];
@@ -121,7 +134,7 @@ describe('HTTP API end-to-end (T029)', () => {
 
   it('walks the wallet lifecycle: create (version 1), duplicate 409, second currency 201 (AC-1/AC-2/G18)', async () => {
     const playerId = v4();
-    const first = await fetch(`${baseUrl}/wallets`, {
+    const first = await authedFetch(`${baseUrl}/wallets`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ playerId, initialBalance: { amount: '1000.00', currency: 'BRL' } }),
@@ -131,7 +144,7 @@ describe('HTTP API end-to-end (T029)', () => {
     expect(created.version).toBe(1);
     expect(created.balance).toEqual({ amount: '1000.00', currency: 'BRL' });
 
-    const dup = await fetch(`${baseUrl}/wallets`, {
+    const dup = await authedFetch(`${baseUrl}/wallets`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ playerId, initialBalance: { amount: '10.00', currency: 'BRL' } }),
@@ -139,7 +152,7 @@ describe('HTTP API end-to-end (T029)', () => {
     expect(dup.status).toBe(409);
     expect((await dup.json()).code).toBe('WALLET_EXISTS');
 
-    const usd = await fetch(`${baseUrl}/wallets`, {
+    const usd = await authedFetch(`${baseUrl}/wallets`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ playerId, initialBalance: { amount: '5.00', currency: 'USD' } }),
@@ -291,7 +304,7 @@ describe('HTTP API end-to-end (T029)', () => {
 
     // review CR-2: the stored snapshot keeps the WALLET currency — a read-back
     // must not rebuild it from the transaction currency (USD here).
-    const read = await fetch(`${baseUrl}/wagering/transactions/${body.transactionId as string}`);
+    const read = await authedFetch(`${baseUrl}/wagering/transactions/${body.transactionId as string}`);
     expect(read.status).toBe(200);
     const found = await read.json();
     expect(found.status).toBe('REJECTED');
@@ -310,7 +323,7 @@ describe('HTTP API end-to-end (T029)', () => {
     expect(opening.status).toBe(400);
     expect((await opening.json()).code).toBe('VALIDATION_ERROR');
 
-    const rec = await fetch(`${baseUrl}/wallets/${wallet.id}/reconciliation`, { method: 'POST' });
+    const rec = await authedFetch(`${baseUrl}/wallets/${wallet.id}/reconciliation`, { method: 'POST' });
     expect(rec.status).toBe(200);
     expect(await rec.json()).toEqual({
       walletId: wallet.id,
@@ -322,7 +335,7 @@ describe('HTTP API end-to-end (T029)', () => {
     });
 
     const empty = await createWallet('0.00');
-    const emptyRec = await fetch(`${baseUrl}/wallets/${empty.id}/reconciliation`, {
+    const emptyRec = await authedFetch(`${baseUrl}/wallets/${empty.id}/reconciliation`, {
       method: 'POST',
     });
     const emptyBody = await emptyRec.json();

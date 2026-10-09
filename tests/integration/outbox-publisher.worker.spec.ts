@@ -122,4 +122,48 @@ describe('OutboxPublisherWorker (T038)', () => {
       
       expect(publishedMessages.length).toBe(2);
   });
+
+  it('sets wagering_outbox_lag to the age of the oldest unpublished message (T046)', async () => {
+    const { metrics } = await import('../../src/common/metrics/metrics');
+    const { OutboxPublisherWorker } = await import('../../src/workers/outbox-publisher.worker');
+
+    metrics.wageringOutboxLag.set(0);
+    const occurredAt = new Date(Date.now() - 90_000);
+    await em.transactional(async (tx) => {
+      await tx.persist(
+        tx.create(OutboxMessageEntity, {
+          id: v4(),
+          eventId: v4(),
+          aggregateId: v4(),
+          eventType: 'WalletBalanceChanged',
+          payload: { walletId: v4() },
+          occurredAt,
+          attempts: 0,
+        } as any),
+      );
+    });
+
+    const worker = new OutboxPublisherWorker(mockConfigFor(em), em);
+    await worker.processBatch();
+
+    expect(metrics.wageringOutboxLag.count).toBeGreaterThanOrEqual(80);
+  });
 });
+
+const mockConfigFor = (em: unknown) =>
+  ({
+    get: (key: string) => {
+      if (key === 'SQS_ENDPOINT') return 'http://localhost:4566';
+      if (key === 'SQS_QUEUE_URL')
+        return 'http://localhost:4566/000000000000/wager-transactions.fifo';
+      if (key === 'WORKERS_ENABLED') return false;
+      return undefined;
+    },
+    getOrThrow: (key: string) => {
+      if (key === 'SQS_ENDPOINT') return 'http://localhost:4566';
+      if (key === 'SQS_QUEUE_URL')
+        return 'http://localhost:4566/000000000000/wager-transactions.fifo';
+      if (key === 'WORKERS_ENABLED') return false;
+      throw new Error(`Missing config: ${key}`);
+    },
+  } as any);
