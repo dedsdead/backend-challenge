@@ -23,7 +23,9 @@ export class OutboxPublisherWorker {
   private readonly pollIntervalMs = 500;
   private readonly jitterMs = 100;
   private isRunning = false;
-  private intervalId: NodeJS.Timeout | null = null;
+  private isShuttingDown = false;
+  private timeoutId: NodeJS.Timeout | null = null;
+  private currentBatchPromise: Promise<void> | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -66,17 +68,22 @@ export class OutboxPublisherWorker {
 
   async stop(): Promise<void> {
     if (!this.isRunning) return;
+    this.isShuttingDown = true;
     this.isRunning = false;
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
+    if (this.timeoutId) {
+      clearTimeout(this.timeoutId);
+      this.timeoutId = null;
+    }
+    // Wait for any in-flight batch to complete
+    if (this.currentBatchPromise) {
+      await this.currentBatchPromise;
     }
   }
 
   private pollLoop(): void {
     if (!this.isRunning) return;
     const jitter = Math.random() * this.jitterMs;
-    setTimeout(() => {
+    this.timeoutId = setTimeout(() => {
       if (this.isRunning) this.processBatch().finally(() => this.pollLoop());
     }, this.pollIntervalMs + Math.random() * this.jitterMs);
   }

@@ -24,7 +24,7 @@ export class PendingReferenceWorker {
   private readonly pollIntervalMs = 5000;
   private readonly jitterMs = 1000;
   private isRunning = false;
-  private intervalId: NodeJS.Timeout | null = null;
+  private timeoutId: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -51,16 +51,16 @@ export class PendingReferenceWorker {
   async stop(): Promise<void> {
     if (!this.isRunning) return;
     this.isRunning = false;
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
+    if (this.timeoutId) {
+      clearTimeout(this.timeoutId);
+      this.timeoutId = null;
     }
   }
 
   private pollLoop(): void {
     if (!this.isRunning) return;
     const jitter = Math.random() * this.jitterMs;
-    setTimeout(() => {
+    this.timeoutId = setTimeout(() => {
       if (this.isRunning) this.processBatch().finally(() => this.pollLoop());
     }, this.pollIntervalMs + Math.random() * this.jitterMs);
   }
