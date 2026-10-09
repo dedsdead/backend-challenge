@@ -3,11 +3,15 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { PinoLoggerService } from './observability/logger';
 
 let app: INestApplication | undefined;
 
 async function bootstrap(): Promise<void> {
-  app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app = await NestFactory.create(AppModule, {
+    logger: new PinoLoggerService(),
+    bufferLogs: true,
+  });
   app.enableShutdownHooks();
 
   // Security hardening
