@@ -66,4 +66,146 @@ describe('payloadHash', () => {
   it('keeps array order significant in the hash', () => {
     expect(payloadHash({ ids: ['a', 'b'] })).not.toBe(payloadHash({ ids: ['b', 'a'] }));
   });
+
+  it('excludes Idempotency-Key from business hash', () => {
+    const base = {
+      providerId: 'p',
+      externalTransactionId: 'tx-1',
+      walletId: 'w-1',
+      playerId: 'player-1',
+      roundId: 'r-1',
+      gameId: 'g-1',
+      kind: 'BET',
+      amount: '25.00',
+      currency: 'BRL',
+      referenceExternalTransactionId: 'ref-1',
+    };
+    // Simulating businessHash which excludes idempotencyKey
+    const hash1 = payloadHash({ ...base });
+    const hash2 = payloadHash({ ...base, idempotencyKey: 'different-key' });
+    expect(hash1).toBe(hash2);
+  });
+
+  it('excludes ingress and other non-business fields from business hash', () => {
+    const base = {
+      providerId: 'p',
+      externalTransactionId: 'tx-1',
+      walletId: 'w-1',
+      playerId: 'player-1',
+      roundId: 'r-1',
+      gameId: 'g-1',
+      kind: 'BET',
+      amount: '25.00',
+      currency: 'BRL',
+      referenceExternalTransactionId: 'ref-1',
+    };
+    // Simulating businessHash which excludes ingress
+    const hash1 = payloadHash({ ...base });
+    const hash2 = payloadHash({ ...base, ingress: { kind: 'http' } });
+    const hash3 = payloadHash({ ...base, ingress: { kind: 'sqs', messageId: 'msg-1', consumerName: 'c' } });
+    expect(hash1).toBe(hash2);
+    expect(hash1).toBe(hash3);
+  });
+
+  it('AC-6: hash divergence when same idempotency key but different payload', () => {
+    const payload1 = {
+      providerId: 'p',
+      externalTransactionId: 'tx-1',
+      walletId: 'w-1',
+      playerId: 'player-1',
+      roundId: 'r-1',
+      gameId: 'g-1',
+      kind: 'BET',
+      amount: '25.00',
+      currency: 'BRL',
+      referenceExternalTransactionId: 'ref-1',
+    };
+    const payload2 = {
+      ...payload1,
+      amount: '50.00', // different amount
+    };
+    expect(payloadHash(payload1)).not.toBe(payloadHash(payload2));
+  });
+
+  it('hash is stable for key-order permutations at all nesting levels', () => {
+    const payload1 = {
+      providerId: 'p',
+      externalTransactionId: 'tx-1',
+      walletId: 'w-1',
+      playerId: 'player-1',
+      roundId: 'r-1',
+      gameId: 'g-1',
+      kind: 'BET',
+      amount: '25.00',
+      currency: 'BRL',
+      referenceExternalTransactionId: 'ref-1',
+    };
+    const payload2 = {
+      currency: 'BRL',
+      amount: '25.00',
+      kind: 'BET',
+      gameId: 'g-1',
+      roundId: 'r-1',
+      playerId: 'player-1',
+      walletId: 'w-1',
+      externalTransactionId: 'tx-1',
+      providerId: 'p',
+      referenceExternalTransactionId: 'ref-1',
+    };
+    expect(payloadHash(payload1)).toBe(payloadHash(payload2));
+  });
+
+  it('handles undefined referenceExternalTransactionId gracefully', () => {
+    const base = {
+      providerId: 'p',
+      externalTransactionId: 'tx-1',
+      walletId: 'w-1',
+      playerId: 'player-1',
+      roundId: 'r-1',
+      gameId: 'g-1',
+      kind: 'BET',
+      amount: '25.00',
+      currency: 'BRL',
+      referenceExternalTransactionId: undefined,
+    };
+    const hash1 = payloadHash(base);
+    const base2 = { ...base };
+    delete base2.referenceExternalTransactionId;
+    const hash2 = payloadHash(base2);
+    expect(hash1).toBe(hash2);
+  });
+
+  it('treats null and missing referenceExternalTransactionId differently', () => {
+    const withNull = {
+      providerId: 'p',
+      externalTransactionId: 'tx-1',
+      walletId: 'w-1',
+      playerId: 'player-1',
+      roundId: 'r-1',
+      gameId: 'g-1',
+      kind: 'BET',
+      amount: '25.00',
+      currency: 'BRL',
+      referenceExternalTransactionId: null,
+    };
+    const without = {
+      providerId: 'p',
+      externalTransactionId: 'tx-1',
+      walletId: 'w-1',
+      playerId: 'player-1',
+      roundId: 'r-1',
+      gameId: 'g-1',
+      kind: 'BET',
+      amount: '25.00',
+      currency: 'BRL',
+    };
+    // Both should serialize to null and produce same hash
+    // Actually canonicalize skips undefined but keeps null
+    // Let's verify the behavior
+    const hashWithNull = payloadHash(withNull);
+    const hashWithout = payloadHash(without);
+    // They should be different because null is serialized but undefined is skipped
+    // This is the current behavior - both are valid but produce different hashes
+    expect(hashWithNull).not.toBe(hashWithout);
+  });
 });
