@@ -743,4 +743,125 @@ wallet.balance == saldo reconstruído pelo ledger
 
 ### Diferenciais opcionais
 
-Teste de carga também conta como diferencial. Se fizer, exponha como `bun run test:load` e registre ambiente, metodologia, throughput, p50/p95/p99, taxa de erro, conflitos de concorrência e outbox lag. Não há meta de RPS — a qualidade do experimento e a honestidade da análise pesam mais que o número bruto.
+Tecnologias e técnicas opcionais que podem agregar valor à entrega:
+
+- **Teste de carga**: exponha como `bun run test:load` e registre ambiente, metodologia, throughput, p50/p95/p99, taxa de erro, conflitos de concorrência e outbox lag. Não há meta de RPS — a qualidade do experimento e a honestidade da análise pesam mais que o número bruto.
+- **OpenTelemetry + dashboard**: tracing distribuído e métricas avançadas.
+- **Autenticação real integrada**: Keycloak/Zitadel com OIDC, não apenas stub.
+
+---
+
+## Setup
+
+### Prerequisites
+
+- **Bun 1.x** (recommended: `bun --version` >= 1.1.0)
+- **Docker** and **Docker Compose** (for PostgreSQL, LocalStack, Keycloak)
+- **Node.js** not required (Bun includes its own runtime)
+
+### Quick Start
+
+```bash
+# 1. Clone the repository
+git clone <repo-url>
+cd backend-challenge
+
+# 2. Configure environment variables
+cp .env.example .env
+# Edit .env if needed (defaults work for local development)
+
+# 3. Start infrastructure (PostgreSQL, LocalStack SQS, Keycloak)
+docker compose up -d
+
+# 4. Create SQS queues
+bun run queue:setup
+
+# 5. Run database migrations
+bun run mikro-orm migration:up
+
+# 6. Start the application
+bun run dev
+```
+
+### Verification
+
+```bash
+# Health checks (no auth required)
+curl http://localhost:3000/health/live   # {"status":"ok"}
+curl http://localhost:3000/health/ready  # {"postgres":"ok","sqs":"ok"}
+
+# Metrics (Prometheus format)
+curl http://localhost:3000/metrics
+
+# Obtain a token (Keycloak direct grant)
+curl -X POST http://localhost:8080/realms/wagering/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password&client_id=wagering-cli&username=operator&password=wagering-dev-123"
+
+# Create a wallet (requires auth)
+TOKEN=<access_token_from_above>
+curl -X POST http://localhost:3000/wallets \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"playerId":"0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1","initialBalance":{"amount":"1000.00","currency":"BRL"}}'
+```
+
+### Keycloak Test Users
+
+| Username | Roles | Password |
+|----------|-------|----------|
+| operator | transact:read, transact:write | wagering-dev-123 |
+| provider-client | transact:read, transact:write | wagering-dev-123 |
+| read-only-client | transact:read | wagering-dev-123 |
+| write-only-client | transact:write | wagering-dev-123 |
+
+All users authenticate against client `wagering-cli` using direct grant.
+
+---
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `bun run dev` | Start the application in development mode (watch mode) |
+| `bun run validate` | TypeScript type-check (`tsc --noEmit`) |
+| `bun run test` | Run all tests (unit + integration + concurrency) |
+| `bun run test:unit` | Run unit tests only |
+| `bun run test:integration` | Run integration tests (requires Docker stack) |
+| `bun run test:concurrency` | Run concurrency tests (≥3 instances) |
+| `bun run test:load` | Run load test (if implemented) |
+| `bun run queue:setup` | Create SQS queues in LocalStack |
+| `bun run mikro-orm migration:create` | Generate a new migration from entity changes |
+| `bun run mikro-orm migration:up` | Apply pending migrations |
+| `bun run mikro-orm migration:down` | Revert last migration |
+| `bun run mikro-orm migration:check` | Check for schema drift |
+| `bun run mikro-orm schema:update --run` | Sync schema (dev only, not for production) |
+
+### Environment Variables
+
+All configuration is via environment variables (see `.env.example`):
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL connection string | `postgres://postgres:local@localhost:5432/wagering` |
+| `SQS_ENDPOINT` | LocalStack SQS endpoint | `http://localhost:4566` |
+| `SQS_QUEUE_URL` | Main FIFO queue URL | `http://localhost:4566/000000000000/wager-transactions.fifo` |
+| `SQS_DLQ_URL` | DLQ FIFO queue URL | `http://localhost:4566/000000000000/wager-transactions-dlq.fifo` |
+| `KEYCLOAK_ISSUER` | Keycloak realm issuer URL | `http://localhost:8080/realms/wagering` |
+| `KEYCLOAK_AUDIENCE` | Expected audience in tokens | `wagering-api` |
+| `PORT` | HTTP server port | `3000` |
+| `HOST` | HTTP server bind address | `127.0.0.1` |
+| `LOG_LEVEL` | Pino log level | `info` |
+| `WORKERS_ENABLED` | Enable background workers | `true` |
+
+---
+
+## Architecture & Documentation
+
+- `ARCHITECTURE.md` — graded artifact with decisions, trade-offs, and limitations
+- `docs/architecture.md` — full source of truth for architecture
+- `docs/infrastructure.md` — infrastructure overview
+- `docs/integrations.md` — integration catalog
+- `docs/environments.md` — environment matrix
+- `docs/glossary.md` — domain and technical terms
+- `docs/solutions/patterns/` — reusable patterns extracted from implementation

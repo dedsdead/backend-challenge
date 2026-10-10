@@ -105,10 +105,9 @@ Phases 2–9.
   (4566, `SERVICES: sqs`), `quay.io/keycloak/keycloak:26.8` (`start-dev --import-realm`,
   mounts `./keycloak/realm-export.json`); all three have healthchecks and bind
   `127.0.0.1` only; no app container (app runs on host via Bun).
-- **Tests**: baseline 2026-10-09 (Phase 8): `bun run validate` exit 0, unit 249 pass /
-  0 fail, all integration suites green when run individually, concurrency (3 specs)
-  pass / 0 fail (earlier snapshot 2026-10-08: 31 spec files / 353 tests / 1222 expects;
-  re-run for current totals). Suites: `tests/unit/config/env.validation.spec.ts`,
+- **Tests**: baseline 2026-10-09 (Phase 9): `bun run validate` exit 0, unit 256 pass /
+  0 fail (26 files), all integration suites green when run individually (14 suites), concurrency (4 specs)
+  pass / 0 fail (10 tests). Suites: `tests/unit/config/env.validation.spec.ts`,
   `tests/unit/health/health.service.spec.ts` (services constructed directly with a mocked EM,
   no DI container), `tests/unit/common/http/exception.filter.spec.ts` (pinned
   `{statusCode, code, message, ...}` contract, domain-error mapping, 503 contract,
@@ -124,11 +123,13 @@ Phases 2–9.
   Phase 6 `tests/integration/sqs-ingress.spec.ts` +
   `tests/unit/messaging/wager-transaction.consumer.spec.ts`, Phase 7
   `tests/integration/{outbox-publisher,pending-reference}.worker.spec.ts` +
-  `tests/integration/workers.spec.ts`, and Phase 8
+  `tests/integration/workers.spec.ts`, Phase 8
   `tests/integration/{auth-observability,metrics}.spec.ts` +
   `tests/unit/auth/{jwt.guard,roles.guard}.spec.ts`,
   `tests/unit/observability/*.spec.ts`, `tests/unit/health/sqs-prober.spec.ts`,
-  `tests/unit/keycloak/realm-export.spec.ts`
+  `tests/unit/keycloak/realm-export.spec.ts`, and Phase 9
+  `tests/integration/crash-recovery.spec.ts`, `tests/concurrency/spec-section13.spec.ts`,
+  `tests/unit/common/idempotency/payload-hash.spec.ts`
   (token helper `tests/helpers/keycloak-token.ts`).
 
 ## Planned / Optional Extensions (If Applicable)

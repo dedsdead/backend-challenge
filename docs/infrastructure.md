@@ -7,19 +7,21 @@ Phases 1–5 of `plans/20261006111327-full-wagering-processor-plan.md`
 HTTP API, Concurrency Hardening — all marked ✅ Completed; Phase 3 schema applied
 to the local database 2026-10-07; Phase 5 concurrency suite passing 2026-10-08).
 Status: **foundation + persistence + HTTP API + concurrency hardening + SQS
-ingestion/workers + auth/observability implemented (Phases 1–8; Phase 8
-completed 2026-10-09)** — the repo contains the NestJS 12 / Bun application
+ingestion/workers + auth/observability + resilience suite implemented (Phases 1–9;
+Phase 9 completed 2026-10-09)** — the repo contains the NestJS 12 / Bun application
 (`src/`, `tests/`),
 `docker-compose.yml` (PostgreSQL 16, LocalStack 4.13.1, Keycloak 26.8), validated
 env config, MikroORM 7.2.4 entities + repositories, migration 001 applied to the
 local database, the wallet/wagering modules `src/modules/` (2026-10-08), the
 **concurrency test suite** (`tests/concurrency/` — hot-wallet, duplicate-flood,
-multi-instance tests), the SQS consumer + outbox publisher + pending-reference
+multi-instance, distinct-wallets-parallel, restart-consistency-sweep tests), the SQS consumer + outbox publisher + pending-reference
 worker (`src/messaging/`, `src/workers/`, Phases 6–7), the global auth guards
-(`src/auth/`), and the observability surface (`src/observability/` — pino
-logging, correlation middleware, `GET /metrics`). No cloud IaC
+(`src/auth/`), the observability surface (`src/observability/` — pino
+logging, correlation middleware, `GET /metrics`), and the **crash-recovery integration
+tests** (`tests/integration/crash-recovery.spec.ts`) plus **idempotency edge unit tests**
+(`tests/unit/common/idempotency/payload-hash.spec.ts`). No cloud IaC
 exists and cloud/provider topology is still undecided; Phase 9 (graded docs) is
-pending. Record further realized
+complete. Record further realized
 decisions in place as implementation lands.
 
 ## Infrastructure Overview
@@ -196,17 +198,20 @@ Local containers (observed names, project = directory name): `backend-challenge-
   **357 pass / 0 fail** across 33 files; `bun run test:concurrency` **3 pass / 0 fail**
   (hot-wallet, duplicate-flood, multi-instance); `docker compose ps` →
   postgres / localstack / keycloak `Up (healthy)` (plan Execution Log).
-- **Evidence 2026-10-09** (Phase 8, auth + observability): `bun run validate`
-  exit 0 (run with `$env:GOMEMLIMIT='1200MiB'`); unit **249 pass / 0 fail**;
-  every integration suite green run individually (`auth-observability` 13,
-  `wallets.http` 23, `wagering.http` 23, `http-api` 8, `bootstrap` 6, `metrics` 3,
-  `sqs-ingress` 7, `submit-transaction.use-case` 27, `workers` 4,
-  `outbox-publisher` 2, `pending-reference` 5, `repositories` 10, `schema` 25,
-  `wallets.service` 7); concurrency **3 pass**; Keycloak realm spec **8 pass**;
-  live tokens verified for all 4 realm users.
+- **Evidence 2026-10-09** (Phase 9, resilience suite + graded docs): `bun run validate`
+exit 0 (run with `$env:GOMEMLIMIT='1200MiB'`); unit **256 pass / 0 fail (26 files)**;
+every integration suite green run individually (`auth-observability` 13,
+`wallets.http` 23, `wagering.http` 23, `http-api` 8, `bootstrap` 6, `metrics` 3,
+`sqs-ingress` 7, `submit-transaction.use-case` 27, `workers` 4,
+`outbox-publisher` 2, `pending-reference` 5, `repositories` 10, `schema` 25,
+`wallets.service` 7); concurrency **10 pass / 0 fail (4 files)** —
+`hot-wallet.spec.ts`, `duplicate-flood.spec.ts`, `multi-instance.spec.ts`,
+`spec-section13.spec.ts`; Keycloak realm spec **8 pass**;
+live tokens verified for all 4 realm users; crash-recovery integration tests pass;
+idempotency edge unit tests pass.
 - **Gap resolved**: `bun run test:concurrency` now passes — `tests/concurrency/`
-  contains `hot-wallet.spec.ts`, `duplicate-flood.spec.ts`, `multi-instance.spec.ts`
-  proving correctness under real parallelism (Phase 5).
+contains `hot-wallet.spec.ts`, `duplicate-flood.spec.ts`, `multi-instance.spec.ts`,
+`spec-section13.spec.ts` proving correctness under real parallelism (Phases 5 + 9).
 
 ### Source-of-truth references
 

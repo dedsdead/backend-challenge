@@ -42,9 +42,9 @@ place it is enforced.
 - `src/auth/public.decorator.ts` — `IS_PUBLIC_KEY` metadata (`SetMetadata`) — the escape
   hatch read by **both** guards
 - `src/auth/roles.decorator.ts` — `ROLES_KEY` + `Roles(...roles)` (L3–L10)
-- `src/auth/jwt.guard.ts` — `JwtGuard`: Bearer parse (L37), `jwtVerify` with
-  issuer+audience (L40–L51), JWKS cache per issuer (L54–64), fail-closed `catch →
-  UnauthorizedException` (L49–51)
+- `src/auth/jwt.guard.ts` — `JwtGuard`: Bearer parse (L37), **JWT 3-segment structure enforcement** (L42–L44), `jwtVerify` with
+  issuer+audience (L46–L62), **issuer host validation via `KEYCLOAK_EXPECTED_ISSUER_HOST`** (L50–L56), JWKS cache per issuer (L70–L80), fail-closed `catch →
+  UnauthorizedException` (L65–L67)
 - `src/auth/roles.guard.ts` — `RolesGuard`: `@Public` skip (L29–30), missing `@Roles` → 403
   (L36), `realm_access.roles` any-of check (L38–45)
 - `src/app.module.ts` — registration: `{ provide: APP_GUARD, useClass: JwtGuard }` then
@@ -75,15 +75,20 @@ place it is enforced.
   | `@Public()` handler | both guards skip; no `req.user` |
   | no/invalid `Authorization` header | 401 `UNAUTHORIZED` |
   | token signature/`exp`/`iss`/`aud` invalid | 401 `UNAUTHORIZED` |
+  | **JWT does not have 3 base64url segments** | **401 `UNAUTHORIZED`** |
+  | **issuer host mismatch (`KEYCLOAK_EXPECTED_ISSUER_HOST`)** | **401 `UNAUTHORIZED`** |
   | JWKS endpoint unreachable | 401 `UNAUTHORIZED` (never 500) |
   | valid token, non-public route **without** `@Roles` | 403 `ROLE_FORBIDDEN` |
   | valid token, required role absent (or token has no `realm_access.roles`) | 403 `ROLE_FORBIDDEN` |
   | valid token + any required role present | passes to the handler with `req.user` set |
 
 - **JWKS**: `createRemoteJWKSet(new URL(\`${issuer}/protocol/openid-connect/certs\`))`,
-  memoized on the guard instance keyed by issuer (`jwt.guard.ts:54–64`); issuer/audience come
+  memoized on the guard instance keyed by issuer (`jwt.guard.ts:70–80`); issuer/audience come
   from `ConfigService.getOrThrow('KEYCLOAK_ISSUER' | 'KEYCLOAK_AUDIENCE')` (both are
   **required** env vars — `src/config/env.validation.ts` fails boot without them).
+  **Issuer host validation**: optional `KEYCLOAK_EXPECTED_ISSUER_HOST` env var enables
+  an additional check that the issuer URL's hostname matches the expected value
+  (`jwt.guard.ts:50–56`), preventing JWKS confusion attacks.
 - **Dependencies**: `jose@^6.2.12` (`package.json:33`). No `@nestjs/jwt`, no local secret.
 - **Unit tests need no Keycloak**: `jwt.guard.spec.ts` spins a `node:http` server that serves
   a JWKS built from a generated RSA key (`generateKeyPair('RS256')` → `exportJWK` →
@@ -152,8 +157,24 @@ export class JwtGuard implements CanActivate {
     const match = /^Bearer\s+(\S+)$/i.exec(header.trim());
     if (!match) throw new UnauthorizedException();
 
+    const token = match[1]!;
+    // Fail fast on obviously malformed JWT (must have 3 base64url segments)
+    if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) {
+      throw new UnauthorizedException();
+    }
+
     const issuer = this.config.getOrThrow<string>('KEYCLOAK_ISSUER');
     const audience = this.config.getOrThrow<string>('KEYCLOAK_AUDIENCE');
+    
+    // Validate issuer host against expected host if configured (prevents JWKS confusion)
+    const expectedIssuerHost = this.config.get<string>('KEYCLOAK_EXPECTED_ISSUER_HOST');
+    if (expectedIssuerHost) {
+      const issuerUrl = new URL(issuer);
+      if (issuerUrl.hostname !== expectedIssuerHost) {
+        throw new UnauthorizedException();
+      }
+    }
+    
     try {
       const { payload } = await jwtVerify(match[1]!, this.getKey(issuer), { issuer, audience });
       request.user = payload;
@@ -351,7 +372,7 @@ async reconcile(@Param('walletId', ParseUUIDPipe) walletId: string) { … }
 // 5. gates: bun run validate && bun test
 ```
 
-## Gotchas (all verified during Phase 8 / T044–T048)
+## Gotchas (all verified during Phase 8 / T044–T048, and Phase 9 security fixes)
 
 - **G1 — guard order is part of the contract.** `JwtGuard` must be registered before
   `RolesGuard` (`src/app.module.ts:54–55`); reversed, `RolesGuard` sees no `req.user` and
@@ -379,6 +400,12 @@ async reconcile(@Param('walletId', ParseUUIDPipe) walletId: string) { … }
   long; don't remove the expiry check or tokens die mid-suite.
 - **G9 — `jose` is a runtime dependency** (`package.json:33`); Bun never type-checks, so a
   renamed import surfaces only in `bun run validate`.
+- **G10 — JWT 3-segment structure is enforced before JWKS verification** (`jwt.guard.ts:42–44`).
+  Tokens that don't match `^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$` are rejected
+  immediately with 401, avoiding unnecessary JWKS calls.
+- **G11 — Optional issuer host validation** via `KEYCLOAK_EXPECTED_ISSUER_HOST` env var
+  (`jwt.guard.ts:50–56`). When set, the issuer URL's hostname must match exactly; mismatch
+  yields 401. This prevents JWKS confusion if the issuer URL is spoofed.
 
 ## Project-Specific Constraints
 

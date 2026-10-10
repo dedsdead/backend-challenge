@@ -432,10 +432,12 @@ non-negative balance CHECK, ledger immutability trigger.
   post-commit; the pending-reference worker (`src/workers/pending-reference.worker.ts`,
   T040) resolves or exhausts `PENDING_REFERENCE` rows with backoff/TTL
   (`reference_attempts` / `reference_next_attempt_at` from migration 001).
-- **Concurrency suites (T030–T032, Phase 5):** **completed** — hot-wallet
+- **Concurrency suites (T030–T032, Phase 5; T050, Phase 9):** **completed** — hot-wallet
   (`tests/concurrency/hot-wallet.spec.ts`), 50× duplicate-flood
-  (`tests/concurrency/duplicate-flood.spec.ts`), and 3-instance
-  (`tests/concurrency/multi-instance.spec.ts`) tests exist and pass; the `FOR UPDATE` +
+  (`tests/concurrency/duplicate-flood.spec.ts`), 3-instance
+  (`tests/concurrency/multi-instance.spec.ts`), and §13 remaining cases
+  (`tests/concurrency/spec-section13.spec.ts` — distinct wallets parallel,
+  restart-consistency sweep) tests exist and pass; the `FOR UPDATE` +
   unique-constraint guarantees are proven under real parallelism.
 - **Idempotency-key scoping migration `(provider_id, key)` (deferred; revisit with
   T039 review):** today `uq_wager_tx_idempotency_key` is global, so one provider
@@ -482,5 +484,5 @@ non-negative balance CHECK, ledger immutability trigger.
 8. Verify with `bun run validate` (`tsc --noEmit`), then `bun test` (integration suites
    need the full compose stack: PostgreSQL + LocalStack + Keycloak **with the
    `wagering` realm imported** — token suites fetch real JWTs). Baseline
-   2026-10-09 (Phase 8): `bun run validate` exit 0; unit 249 pass / 0 fail; all
-   integration suites green run individually; concurrency 3 pass / 0 fail.
+   2026-10-09 (Phase 9): `bun run validate` exit 0; unit 256 pass / 0 fail (26 files); all
+   integration suites green run individually; concurrency 10 pass / 0 fail (4 files).

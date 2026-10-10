@@ -62,7 +62,9 @@ actually using (`logger: false` vs an injected sink).
   `CreateLoggerOptions.level ?? process.env.LOG_LEVEL ?? 'info'`.
 - **Redaction paths** (censor `[Redacted]`): `req.headers.authorization`,
   `*.headers.authorization`, plus bare **and** nested `data` / `payload` / `body`
-  (`['data','payload','body', '*.data', '*.payload', '*.body']`). The bare forms exist
+  (`['data','payload','body', '*.data', '*.payload', '*.body']`), **and nested financial
+  fields** (`'*.money', '*.amount', '*.currency', '*.balance', '*.balanceBefore',
+  '*.balanceAfter', '*.balance_before', '*.balance_after'`) — the bare forms exist
   because fast-redact's `*.x` does **not** match a top-level `x` (comment `logger.ts:11–12`).
 - **`PinoLoggerService`**: implements Nest `LoggerService`; with `{ destination }` it builds
   a **dedicated** logger (`createLogger(options)`), without it it delegates to the
@@ -109,11 +111,13 @@ pino's numeric levels (warn = **40**) and its asynchronous flush.
 
 ```ts
 const payloadKeys = ['data', 'payload', 'body'];
+const financialKeys = ['money', 'amount', 'currency', 'balance', 'balanceBefore', 'balanceAfter', 'balance_before', 'balance_after'];
 const REDACT_PATHS = [
   'req.headers.authorization',
   '*.headers.authorization',
   ...payloadKeys,                    // bare top-level keys (fast-redact `*.x` misses `x`)
   ...payloadKeys.map((key) => `*.${key}`),  // one level down (req/res wrappers)
+  ...financialKeys.map((key) => `*.${key}`), // nested financial fields at any depth
 ];
 
 export const loggerOptions = (options: CreateLoggerOptions = {}): LoggerOptions => ({
@@ -130,6 +134,10 @@ Key points:
   no body).
 - Adding a new sensitive key ⇒ add both `key` and `*.key` forms, or nested-only leakage
   stays covered while top-level leaks (or vice versa) slip through.
+- **Financial fields** (`money`, `amount`, `currency`, `balance`, `balanceBefore`,
+  `balanceAfter`, `balance_before`, `balance_after`) are redacted at any nesting depth
+  via `*.<field>` patterns — this prevents accidental leakage of monetary values in
+  structured log bindings (Phase 9 security fix).
 - `PinoLoggerService`'s constructor branch matters for tests: `{ destination }` ⇒ private
   logger (fixture-safe), no options ⇒ shared `pinoLogger` (process-wide side effects).
 
@@ -278,7 +286,7 @@ expect(chunks.join('')).not.toContain('s3cret');
 // 5. gates: bun run validate && bun test
 ```
 
-## Gotchas (all verified during Phase 8 / T045–T048)
+## Gotchas (all verified during Phase 8 / T045–T048, and Phase 9 security fixes)
 
 - **G1 — pino warn is 40, not 50.** Numeric levels: trace 10, debug 20, info 30, warn 40,
   error 50, fatal 60. Assert `level === 40 || level === 'warn'`; a `=== 50` expectation finds
@@ -303,11 +311,17 @@ expect(chunks.join('')).not.toContain('s3cret');
 - **G8 — `getCorrelationId()` is plumbing, not yet a consumer.** Nothing in `src/` reads it
   today; don't assert a `correlationId` *binding* on filter lines — assert the `cid=` text or
   explicitly-passed bindings.
+- **G9 — financial fields redaction at any depth.** The `financialKeys` array and `*.<field>`
+  patterns (Step 1) ensure monetary values never leak through nested log bindings — this was
+  a Phase 9 security fix for redaction gaps.
 
 ## Project-Specific Constraints
 
 - [ ] Every `redact` addition updates **both** bare and `*.`-prefixed paths for the key
       (G6); censor stays `'[Redacted]'`.
+- [ ] **Financial fields** (`money`, `amount`, `currency`, `balance`, `balanceBefore`,
+      `balanceAfter`, `balance_before`, `balance_after`) are redacted via `*.<field>`
+      patterns at any nesting depth (Phase 9 security fix).
 - [ ] Log statements carry **ids/bindings only** (transactionId, walletId, providerId,
       messageId, failureCode, correlationId) — never request bodies, financial payloads, or
       `Authorization` headers (README §12).
@@ -337,6 +351,8 @@ expect(chunks.join('')).not.toContain('s3cret');
   `PinoLoggerService` — one adapter, one options source (`loggerOptions`).
 - ❌ Don't change the `cid=` format in `exception.filter.ts` without updating the specs that
   grep for `cid=` (`auth-observability.spec.ts:219`, filter unit spec).
+- ❌ Don't omit `*.<financial-field>` patterns from `REDACT_PATHS` — nested monetary values
+  will leak through structured bindings (G9).
 
 ## Related Patterns / Docs
 
@@ -357,9 +373,11 @@ expect(chunks.join('')).not.toContain('s3cret');
    values (G5); include `correlationId`/`transactionId`/`messageId` where available.
 2. **New sensitive field** → `logger.ts` `REDACT_PATHS` (bare + `*.` pair) → unit redaction
    test → extend the sink suite's negative scan.
-3. **New assertion on log content** → copy the Step-5 recipe: sink injection with explicit
+3. **New financial field** → add to `financialKeys` array in `logger.ts` (auto-expands to
+   `*.<field>` patterns) → unit redaction test → extend the sink suite's negative scan.
+4. **New assertion on log content** → copy the Step-5 recipe: sink injection with explicit
    `level`, marker-line poll, `slice(before)`, raw-line negatives, `level === 40 || 'warn'`.
-4. **Touching correlation** → keep module-level registration + `'{*splat}'` + shared
+5. **Touching correlation** → keep module-level registration + `'{*splat}'` + shared
    `CORRELATION_ID_RE`; update `correlation.spec.ts` and `bootstrap.spec.ts` echo tests.
-5. **Gates (fresh evidence)**: `bun run validate` (exit 0) → `bun test tests/unit/observability`
+6. **Gates (fresh evidence)**: `bun run validate` (exit 0) → `bun test tests/unit/observability`
    → `bun test tests/integration/auth-observability` (13 pass) → full `bun test` (0 fail).

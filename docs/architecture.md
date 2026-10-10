@@ -3,32 +3,35 @@
 Source of truth for system architecture, technology choices, and safe-change guidance.
 The challenge specification is `../README.md`; decisions are recorded here (and in
 [decisions/](decisions/) as ADRs when created). Status: **foundation, domain,
-persistence, HTTP API, and concurrency hardening implemented** (Phases 1–5,
-2026-10-06/08) — the NestJS/Bun scaffold (`src/`), local Docker stack
+persistence, HTTP API, concurrency hardening, SQS ingress/egress, outbox publisher,
+pending-reference worker, auth + observability, and resilience suite implemented**
+(Phases 1–9, 2026-10-06/09) — the NestJS/Bun scaffold (`src/`), local Docker stack
 (`docker-compose.yml`), env validation (`src/config/env.validation.ts` +
 `.env.example`), health endpoints (`src/health/`), the domain model
 (`src/domain/` + integration events in `src/events/`), the persistence layer
 (`src/database/` — 5 entities, mappers, repository ports/implementations,
 migration 001 applied to the local database 2026-10-07), the use-case/HTTP layer
 (`src/modules/wallets/`, `src/modules/wagering/` — atomic submit use case, spec §9
-endpoints, pinned error contract in `src/common/http/exception.filter.ts`), and
-the **concurrency test suite** (`tests/concurrency/` — hot-wallet, duplicate-flood,
-multi-instance tests proving correctness under real parallelism) exist and pass
-tests (Phase 8 baseline 2026-10-09: `bun run validate` exit 0, unit 249 pass /
-0 fail, integration suites green run individually, concurrency 3 pass / 0 fail;
-earlier full-suite snapshot 357 pass / 0 fail across 33 files, 2026-10-08);
-**SQS ingress/egress, the
+endpoints, pinned error contract in `src/common/http/exception.filter.ts`), the
+**concurrency test suite** (`tests/concurrency/` — hot-wallet, duplicate-flood,
+multi-instance, distinct-wallets-parallel, restart-consistency-sweep tests
+proving correctness under real parallelism) exist and pass tests (Phase 9 baseline
+2026-10-09: `bun run validate` exit 0, unit 256 pass / 0 fail (26 files),
+integration suites green run individually (14 suites), concurrency 10 pass / 0 fail
+(4 files); earlier full-suite snapshot 357 pass / 0 fail across 33 files,
+2026-10-08); **SQS ingress/egress, the
 outbox publisher, and the pending-reference worker** (`src/messaging/`,
 `src/workers/`, Phases 6–7) and **auth + observability** (Phase 8, 2026-10-09 —
 global JWT/roles guards in `src/auth/`, pino logging + correlation middleware +
 `GET /metrics` in `src/observability/`) are in place; **Phase 9** (graded root
-`ARCHITECTURE.md` + doc sync) is still pending (execution plan + clarifications).
+`ARCHITECTURE.md` + doc sync + resilience suite + idempotency edge tests) is
+complete (T049–T054).
 
 **Graded deliverable note:** the challenge grades a root-level `ARCHITECTURE.md`
 (spec §14 documentation points; §2 and §4 also reference it by name). This file is the
-working source of truth — the root `ARCHITECTURE.md` is created before delivery
-(plan T053, Phase 9) as the graded artifact (a decisions/trade-offs summary linking
-here as the full source of truth) and kept in sync with this file (plan T054).
+working source of truth — the root `ARCHITECTURE.md` was created at plan T053 (Phase 9)
+as the graded artifact (a decisions/trade-offs summary linking
+here as the full source of truth) and is kept in sync with this file (plan T054).
 
 ## System Overview
 
@@ -76,9 +79,9 @@ Decisions (source: execution plan + clarifications):
 | ORM | MikroORM (preferred) or TypeORM | ✅ **MikroORM** (explicit UoW, `transactional()`, `LockMode`) |
 | Concurrency strategy | pessimistic lock / optimistic lock + retry / conditional update | ✅ **Pessimistic row lock** (`FOR UPDATE` on wallet row inside the tx, scope = `walletId`); `version` incremented on balance change for observability |
 | Authentication | external IdP (e.g. Keycloak, Zitadel) or documented no-op extension point | ✅ **Keycloak** (OIDC JWT via JWKS; health + `/metrics` open) |
-| Root `ARCHITECTURE.md` | graded artifact required by spec §14 vs. this file as canonical — sync strategy | ✅ **Root summary** (see Graded deliverable note above); sync at plan T053/T054 |
+| Root `ARCHITECTURE.md` | graded artifact required by spec §14 vs. this file as canonical — sync strategy | ✅ **Root summary** (see Graded deliverable note above); created at T053, synced at T054 |
 
-Legend: ✅ = decided 2026-10-06. Implementation state of these rows after Phase 8
+Legend: ✅ = decided 2026-10-06. Implementation state of these rows after Phase 9
 (2026-10-09): **MikroORM** — wired in `src/app.module.ts`, with 5 entities, mappers,
 and repository ports/implementations in `src/database/`; migration 001 applied;
 `LockMode.PESSIMISTIC_WRITE` used in `WalletRepository.findByIdForUpdate`, called
@@ -89,11 +92,12 @@ as transaction factory, per-tx repositories — see
 [infrastructure.md](infrastructure.md) → Deferred gaps); **pessimistic row lock** —
 used by the Phase 4 submit path and **proven under real parallelism by the Phase 5
 concurrency suite** (`tests/concurrency/` — hot-wallet, duplicate-flood,
-multi-instance tests all pass); **Keycloak** — realm fully configured in
+multi-instance, distinct-wallets-parallel, restart-consistency-sweep tests all pass); **Keycloak** — realm fully configured in
 `keycloak/realm-export.json` (roles `transact:read`/`transact:write`, clients,
 4 users — T043) and enforced by the global JWT/roles guards (`src/auth/`, T044;
-health + `GET /metrics` stay `@Public()`); **root `ARCHITECTURE.md`** — not yet
-created. Flip these
+health + `GET /metrics` stay `@Public()`); **root `ARCHITECTURE.md`** — created at
+T053 (Phase 9) as the graded artifact linking here as full source of truth; synced
+at T054. Flip these
 annotations to "implemented" at plan T054.
 
 ## Module and Service Boundaries

@@ -11,6 +11,7 @@ process.env.SQS_QUEUE_URL ??= 'http://localhost:4566/000000000000/wager-transact
 process.env.SQS_DLQ_URL ??= 'http://localhost:4566/000000000000/wager-transactions-dlq.fifo';
 process.env.KEYCLOAK_ISSUER ??= 'http://localhost:8080/realms/wagering';
 process.env.KEYCLOAK_AUDIENCE ??= 'wagering-api';
+process.env.WORKERS_ENABLED = 'false';
 
 /** In-memory pino destination: captures every JSON log line the app emits. */
 class LogSink {
@@ -229,8 +230,10 @@ describe('auth & observability (T044/T048)', () => {
           return undefined;
         }
       });
+      // Find the warn line that specifically contains our correlation ID
       const warnLine = parsed.find(
-        (entry) => entry && (entry['level'] === 40 || entry['level'] === 'warn'),
+        (entry) => entry && (entry['level'] === 40 || entry['level'] === 'warn') &&
+                   String(entry['msg']).includes('cid=authobs-cid-1'),
       );
       expect(warnLine).toBeDefined();
       expect(String(warnLine?.['msg'])).toContain('cid=authobs-cid-1');

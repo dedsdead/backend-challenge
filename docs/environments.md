@@ -11,7 +11,7 @@ the spec; other environments are pending decisions.
 | Purpose | development + integration/concurrency tests | shared integration testing | pre-production validation | production |
 | Runtime | Docker Compose (PostgreSQL 16 + LocalStack 4.13.1 + Keycloak 26.8) + Bun 1.4.2 | not defined yet | not defined yet | not defined yet |
 | Data | disposable, seeded | synthetic only | synthetic only | real |
-| Status | primary environment for this project; implemented Phases 1–8 (2026-10-06/09): three containers + env validation + health endpoints (readiness = PostgreSQL + SQS) + persistence (entities, repositories, migration 001 applied 2026-10-07) + HTTP API (`src/modules/wallets/`, `src/modules/wagering/`, 2026-10-08) + SQS consumer/workers (Phases 6–7) + auth & observability (Phase 8, 2026-10-09: realm `keycloak/realm-export.json` with roles/clients/users, global JWT + roles guards, pino logging with redaction, correlation middleware, `GET /metrics`) | pending decision | pending decision | pending decision |
+| Status | primary environment for this project; implemented Phases 1–9 (2026-10-06/09): three containers + env validation + health endpoints (readiness = PostgreSQL + SQS) + persistence (entities, repositories, migration 001 applied 2026-10-07) + HTTP API (`src/modules/wallets/`, `src/modules/wagering/`, 2026-10-08) + SQS consumer/workers (Phases 6–7) + auth & observability (Phase 8, 2026-10-09: realm `keycloak/realm-export.json` with roles/clients/users, global JWT + roles guards, pino logging with redaction, correlation middleware, `GET /metrics`) + **resilience suite (Phase 9, 2026-10-09: crash-recovery integration tests, §13 remaining concurrency cases, idempotency edge unit tests, graded root `ARCHITECTURE.md`)** | pending decision | pending decision | pending decision |
 
 ## Configuration and Secrets Boundaries
 
@@ -63,7 +63,7 @@ deploy must tolerate 3+ running instances (rolling, no global downtime assumptio
 | Health | `/health/live`, `/health/ready` | same | same | same |
 | Access | developer machine | team | restricted | restricted, audited |
 
-Current state (Phases 1–8, 2026-10-09): health endpoints behave as tabulated
+Current state (Phases 1–9, 2026-10-09): health endpoints behave as tabulated
 (`/health/ready` returns `{postgres:'ok', sqs:'ok'}`);
 persistence (entities, repositories, migration 001 applied to the local database)
 is in place; the wallet/wagering HTTP endpoints **require a Keycloak bearer
@@ -90,6 +90,6 @@ boot the app or hit the same database; `tests/integration/{schema,repositories}.
 migration 001 must be applied first:
 `bun run mikro-orm migration:up --config src/database/mikro-orm.config.ts`). Treat
 the local database as disposable — those suites insert and delete rows.
-**Concurrency suite**: `bun run test:concurrency` runs the Phase 5 tests
-(`tests/concurrency/*.spec.ts`) against the live stack — 3 tests, 3 instances
-proven correct.
+**Concurrency suite**: `bun run test:concurrency` runs the Phase 5 + 9 tests
+(`tests/concurrency/*.spec.ts`) against the live stack — 4 files, 10 tests,
+proven correct under real parallelism.

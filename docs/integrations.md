@@ -3,15 +3,19 @@
 Source of truth for every internal and external integration: contracts, auth model,
 ownership, and failure handling. Status: **foundation + domain + persistence +
 HTTP API + concurrency hardening (Phases 1–5, 2026-10-06/08), SQS ingestion +
-workers (Phases 6–7), auth + observability (Phase 8, 2026-10-09)** — the local
+workers (Phases 6–7), auth + observability (Phase 8, 2026-10-09), resilience
+suite (Phase 9, 2026-10-09)** — the local
 stack, unauthenticated health + `GET /metrics` endpoints, domain model,
 integration events (`src/events/`), inbox/outbox persistence (`src/database/` —
 `inbox_message`/`outbox_message` tables, repositories), the provider HTTP routes
 (`src/modules/wallets/`, `src/modules/wagering/` — **guarded** since Phase 8 by
 the global `JwtGuard` + `RolesGuard` in `src/auth/`), the **concurrency test
-suite** (`tests/concurrency/` — hot-wallet, duplicate-flood, multi-instance tests
+suite** (`tests/concurrency/` — hot-wallet, duplicate-flood, multi-instance,
+distinct-wallets-parallel, restart-consistency-sweep tests
 proving correctness under real parallelism), the SQS consumer / outbox publisher /
-pending-reference worker (`src/messaging/`, `src/workers/`), and **metrics
+pending-reference worker (`src/messaging/`, `src/workers/`), **crash-recovery
+integration tests** (`tests/integration/crash-recovery.spec.ts`), **idempotency
+edge unit tests** (`tests/unit/common/idempotency/payload-hash.spec.ts`), and **metrics
 instrumentation** (`src/common/metrics/metrics.ts` — a facade over
 `src/observability/metrics.service.ts`, served at `GET /metrics`) exist.
 Contracts below are prescribed by `../README.md` except where a row states
