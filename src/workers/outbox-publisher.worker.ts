@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit, OnModuleDestroy, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EntityManager } from '@mikro-orm/core';
 import { SQSClient, SendMessageBatchCommand } from '@aws-sdk/client-sqs';
@@ -26,12 +26,14 @@ export class OutboxPublisherWorker {
   private isShuttingDown = false;
   private timeoutId: NodeJS.Timeout | null = null;
   private currentBatchPromise: Promise<void> | null = null;
+  public customPublishBatch: ((em: EntityManager, messages: OutboxMessage[]) => Promise<void>) | undefined;
 
   constructor(
     private readonly config: ConfigService,
     private readonly em: EntityManager,
+    @Optional() @Inject(SQSClient) sqsClient?: SQSClient,
   ) {
-    this.sqsClient = this.createSqsClient();
+    this.sqsClient = sqsClient ?? this.createSqsClient();
     this.queueUrl = this.config.getOrThrow<string>('SQS_QUEUE_URL');
   }
 
@@ -64,6 +66,10 @@ export class OutboxPublisherWorker {
     this.isRunning = true;
     this.logger.log('Starting outbox publisher worker');
     this.pollLoop();
+  }
+
+  setCustomPublishBatch(fn: (em: EntityManager, messages: OutboxMessage[]) => Promise<void>): void {
+    this.customPublishBatch = fn;
   }
 
   async stop(): Promise<void> {
@@ -106,7 +112,13 @@ export class OutboxPublisherWorker {
         if (messages.length === 0) return;
 
         this.logger.debug(`Publishing ${messages.length} outbox messages`);
-        await this.publishBatch(em, messages);
+        
+        // Use custom publish function if provided (for testing), otherwise use default
+        if (this.customPublishBatch) {
+          await this.customPublishBatch(em, messages);
+        } else {
+          await this.publishBatch(em, messages);
+        }
         
         // Mark all as published in the same transaction
         for (const msg of messages) {

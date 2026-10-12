@@ -5,7 +5,7 @@ export const OutboxMessageEntity = defineEntity({
   tableName: 'outbox_message',
   properties: {
     id: { type: 'uuid', primary: true, defaultRaw: 'gen_random_uuid()' },
-    eventId: { type: 'uuid' },
+    eventId: { type: 'uuid', defaultRaw: 'gen_random_uuid()' },
     aggregateId: { type: 'uuid' },
     eventType: { type: 'string' },
     payload: { type: 'jsonb' },

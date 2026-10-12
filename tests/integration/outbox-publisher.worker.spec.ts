@@ -14,6 +14,7 @@ import { WalletBalanceChanged } from '../../src/events/wallet-balance-changed.ev
 import { WagerTransactionProcessed } from '../../src/events/wager-transaction-processed.event';
 import { WagerTransactionRejected } from '../../src/events/wager-transaction-rejected.event';
 import { acquireTestLock, releaseTestLock } from '../helpers/test-db-lock';
+import type { SQSClient } from '@aws-sdk/client-sqs';
 
 const truncate = async (view: EntityManager) => {
   await view.getConnection().execute('TRUNCATE TABLE outbox_message');
@@ -60,7 +61,7 @@ describe('OutboxPublisherWorker (T038)', () => {
     return { id: wallet.id, playerId };
   };
 
-  it('should publish pending outbox messages and mark them as published', async () => {
+it('should publish pending outbox messages and mark them as published', async () => {
     // Create outbox messages (pending)
     await em.transactional(async (tx) => {
       await tx.persist(
@@ -89,6 +90,12 @@ describe('OutboxPublisherWorker (T038)', () => {
 
     // Call the worker's processBatch to process the messages
     const { OutboxPublisherWorker } = await import('../../src/workers/outbox-publisher.worker');
+    const { SQSClient } = await import('@aws-sdk/client-sqs');
+    
+    // Create mock SQS client that always succeeds
+    const mockSqsClient = {
+      send: async () => ({ $metadata: { httpStatusCode: 200 } }),
+    } as unknown as SQSClient;
     
     // Create mock config
     const mockConfig = {
@@ -106,21 +113,21 @@ describe('OutboxPublisherWorker (T038)', () => {
       },
     } as any;
 
-    const worker = new OutboxPublisherWorker(mockConfig, em);
+    const worker = new OutboxPublisherWorker(mockConfig, em, mockSqsClient);
     
     // Call processBatch to process the messages
     await worker.processBatch();
     
-// Verify messages were published and marked as published
-      const publishedMessages = await em.find(OutboxMessageEntity, {});
-      
-      // Check that messages were marked as published
-      for (const msg of publishedMessages) {
-        expect(msg.publishedAt).toBeDefined();
-        expect(msg.publishedAt).not.toBeNull();
-      }
-      
-      expect(publishedMessages.length).toBe(2);
+    // Verify messages were published and marked as published
+    const publishedMessages = await em.find(OutboxMessageEntity, {});
+    
+    // Check that messages were marked as published
+    for (const msg of publishedMessages) {
+      expect(msg.publishedAt).toBeDefined();
+      expect(msg.publishedAt).not.toBeNull();
+    }
+    
+    expect(publishedMessages.length).toBe(2);
   });
 
   it('sets wagering_outbox_lag to the age of the oldest unpublished message (T046)', async () => {
