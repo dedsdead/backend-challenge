@@ -67,7 +67,7 @@ describe('payloadHash', () => {
     expect(payloadHash({ ids: ['a', 'b'] })).not.toBe(payloadHash({ ids: ['b', 'a'] }));
   });
 
-  it('excludes Idempotency-Key from business hash', () => {
+  it('includes all fields passed to it (idempotencyKey changes the hash)', () => {
     const base = {
       providerId: 'p',
       externalTransactionId: 'tx-1',
@@ -80,13 +80,13 @@ describe('payloadHash', () => {
       currency: 'BRL',
       referenceExternalTransactionId: 'ref-1',
     };
-    // Simulating businessHash which excludes idempotencyKey
+    // payloadHash includes all fields passed to it
     const hash1 = payloadHash({ ...base });
     const hash2 = payloadHash({ ...base, idempotencyKey: 'different-key' });
-    expect(hash1).toBe(hash2);
+    expect(hash1).not.toBe(hash2);
   });
 
-  it('excludes ingress and other non-business fields from business hash', () => {
+  it('includes all fields passed to it (ingress changes the hash)', () => {
     const base = {
       providerId: 'p',
       externalTransactionId: 'tx-1',
@@ -99,12 +99,13 @@ describe('payloadHash', () => {
       currency: 'BRL',
       referenceExternalTransactionId: 'ref-1',
     };
-    // Simulating businessHash which excludes ingress
+    // payloadHash includes all fields passed to it
     const hash1 = payloadHash({ ...base });
     const hash2 = payloadHash({ ...base, ingress: { kind: 'http' } });
     const hash3 = payloadHash({ ...base, ingress: { kind: 'sqs', messageId: 'msg-1', consumerName: 'c' } });
-    expect(hash1).toBe(hash2);
-    expect(hash1).toBe(hash3);
+    expect(hash1).not.toBe(hash2);
+    expect(hash1).not.toBe(hash3);
+    expect(hash2).not.toBe(hash3);
   });
 
   it('AC-6: hash divergence when same idempotency key but different payload', () => {
