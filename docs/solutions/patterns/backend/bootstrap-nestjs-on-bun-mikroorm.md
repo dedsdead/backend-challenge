@@ -105,7 +105,7 @@ Phases 2–9.
   (4566, `SERVICES: sqs`), `quay.io/keycloak/keycloak:26.8` (`start-dev --import-realm`,
   mounts `./keycloak/realm-export.json`); all three have healthchecks and bind
   `127.0.0.1` only; no app container (app runs on host via Bun).
-- **Tests**: baseline 2026-10-09 (Phase 9): `bun run validate` exit 0, unit 256 pass /
+- **Tests**: baseline 2026-10-09 (Phase 9): `bun run validate` exit 0, unit 262 pass /
   0 fail (26 files), all integration suites green when run individually (14 suites), concurrency (4 specs)
   pass / 0 fail (10 tests). Suites: `tests/unit/config/env.validation.spec.ts`,
   `tests/unit/health/health.service.spec.ts` (services constructed directly with a mocked EM,

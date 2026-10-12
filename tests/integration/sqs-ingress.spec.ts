@@ -194,7 +194,7 @@ describe('SQS Ingress (T037)', () => {
       await new Promise((r) => setTimeout(r, 500));
 
       // Verify exactly one transaction stored
-      const view = orm.em.fork();
+      const view = em.fork();
       const txs = await new MikroOrmWagerTransactionRepository(view).findByWalletId(walletId);
       const betTxs = txs.filter((t: WagerTransaction) => t.kind === WagerTransactionKind.Bet);
       expect(betTxs).toHaveLength(1);
@@ -243,7 +243,7 @@ describe('SQS Ingress (T037)', () => {
       await new Promise((r) => setTimeout(r, 2000));
 
       // Verify PENDING_REFERENCE transaction created
-      const view = orm.em.fork();
+      const view = em.fork();
       const txs = await new MikroOrmWagerTransactionRepository(view).findByWalletId(walletId);
       const refundTxs = txs.filter((t: WagerTransaction) => t.kind === WagerTransactionKind.Refund);
       expect(refundTxs).toHaveLength(1);
@@ -294,7 +294,7 @@ describe('SQS Ingress (T037)', () => {
       expect(dlqDepth).toBeGreaterThan(0);
 
       // Verify no transaction was created
-      const view = orm.em.fork();
+      const view = em.fork();
       const txs = await new MikroOrmWagerTransactionRepository(view).findAll();
       expect(txs.length).toBe(0);
     });
@@ -308,14 +308,14 @@ describe('SQS Ingress (T037)', () => {
       // Wait longer for all poison messages to be processed and sent to DLQ
       await new Promise((r) => setTimeout(r, 3000));
 
-      // Service should still process valid messages
+// Service should still process valid messages
       const { id: walletId, playerId } = await newWallet('1000.00');
       const validEnvelope = createEnvelope({ playerId, walletId, amount: '25.00' });
       await sendMessage(validEnvelope);
       // Wait longer for the valid message to be processed
       await new Promise((r) => setTimeout(r, 2000));
 
-      const view = orm.em.fork();
+      const view = em.fork();
       const txs = await new MikroOrmWagerTransactionRepository(view).findByWalletId(walletId);
       expect(txs.filter((t) => t.kind === WagerTransactionKind.Bet)).toHaveLength(1);
     }, 15000);
@@ -338,9 +338,9 @@ describe('SQS Ingress (T037)', () => {
       // Wait longer for the valid message to be processed
       await new Promise((r) => setTimeout(r, 2000));
 
-      const view = orm.em.fork();
+      const view = em.fork();
       const txs = await new MikroOrmWagerTransactionRepository(view).findByWalletId(walletId);
-      expect(txs.filter((t: WagerTransaction) => t.kind === WagerTransactionKind.Bet)).toHaveLength(1);
+      expect(txs.filter((t) => t.kind === WagerTransactionKind.Bet)).toHaveLength(1);
     }, 20000);
   });
 });

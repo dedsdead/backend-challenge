@@ -199,10 +199,10 @@ Local containers (observed names, project = directory name): `backend-challenge-
   (hot-wallet, duplicate-flood, multi-instance); `docker compose ps` →
   postgres / localstack / keycloak `Up (healthy)` (plan Execution Log).
 - **Evidence 2026-10-09** (Phase 9, resilience suite + graded docs): `bun run validate`
-exit 0 (run with `$env:GOMEMLIMIT='1200MiB'`); unit **256 pass / 0 fail (26 files)**;
+exit 0 (run with `$env:GOMEMLIMIT='1200MiB'`); unit **262 pass / 0 fail (26 files)**;
 every integration suite green run individually (`auth-observability` 13,
 `wallets.http` 23, `wagering.http` 23, `http-api` 8, `bootstrap` 6, `metrics` 3,
-`sqs-ingress` 7, `submit-transaction.use-case` 27, `workers` 4,
+`sqs-ingress` 7, `submit-transaction` 27, `workers` 4,
 `outbox-publisher` 2, `pending-reference` 5, `repositories` 10, `schema` 25,
 `wallets.service` 7); concurrency **10 pass / 0 fail (4 files)** —
 `hot-wallet.spec.ts`, `duplicate-flood.spec.ts`, `multi-instance.spec.ts`,
@@ -212,6 +212,9 @@ idempotency edge unit tests pass.
 - **Gap resolved**: `bun run test:concurrency` now passes — `tests/concurrency/`
 contains `hot-wallet.spec.ts`, `duplicate-flood.spec.ts`, `multi-instance.spec.ts`,
 `spec-section13.spec.ts` proving correctness under real parallelism (Phases 5 + 9).
+- **New**: `bun run test:integration:seq` runs all 18 integration test files
+sequentially (~53s) to avoid PostgreSQL advisory lock contention that causes
+timeouts when running `bun test` in parallel.
 
 ### Source-of-truth references
 

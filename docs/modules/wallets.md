@@ -372,5 +372,5 @@ outbox rows those workers publish. Auth guards and metrics live in `src/auth/` /
    this doc's Auth column in sync.
 7. Verify with `bun run validate` then `bun test` (integration requires the compose
    stack: PostgreSQL/LocalStack/Keycloak up). Baseline 2026-10-09 (Phase 9):
-   `bun run validate` exit 0; unit 256 pass / 0 fail (26 files); all integration
+   `bun run validate` exit 0; unit 262 pass / 0 fail (26 files); all integration
    suites green run individually; concurrency 10 pass / 0 fail (4 files).

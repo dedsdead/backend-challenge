@@ -16,7 +16,7 @@ endpoints, pinned error contract in `src/common/http/exception.filter.ts`), the
 **concurrency test suite** (`tests/concurrency/` — hot-wallet, duplicate-flood,
 multi-instance, distinct-wallets-parallel, restart-consistency-sweep tests
 proving correctness under real parallelism) exist and pass tests (Phase 9 baseline
-2026-10-09: `bun run validate` exit 0, unit 256 pass / 0 fail (26 files),
+2026-10-09: `bun run validate` exit 0, unit 262 pass / 0 fail (26 files),
 integration suites green run individually (14 suites), concurrency 10 pass / 0 fail
 (4 files); earlier full-suite snapshot 357 pass / 0 fail across 33 files,
 2026-10-08); **SQS ingress/egress, the

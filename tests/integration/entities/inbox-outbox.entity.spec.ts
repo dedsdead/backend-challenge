@@ -118,6 +118,7 @@ describe('OutboxMessageEntity', () => {
     const eventId = v4();
     const msg = em.create(OutboxMessageEntity, {
       id: eventId,
+      eventId: v4(),
       aggregateId: v4(),
       eventType: 'TestEvent',
       payload: { test: 'data' },
@@ -140,6 +141,7 @@ describe('OutboxMessageEntity', () => {
     const eventId = v4();
     const msg = em.create(OutboxMessageEntity, {
       id: eventId,
+      eventId: v4(),
       aggregateId: v4(),
       eventType: 'TestEvent',
       payload: { test: 'data' },
