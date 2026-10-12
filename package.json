@@ -11,6 +11,7 @@
     "test": "bun test",
     "test:unit": "bun test tests/unit",
     "test:integration": "bun test tests/integration",
+    "test:integration:seq": "bun scripts/test-integration-sequential.ts",
     "test:concurrency": "bun test tests/concurrency",
     "mikro-orm": "mikro-orm",
     "queue:setup": "bun scripts/create-queues.ts"
