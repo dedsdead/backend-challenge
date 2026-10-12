@@ -484,5 +484,5 @@ non-negative balance CHECK, ledger immutability trigger.
 8. Verify with `bun run validate` (`tsc --noEmit`), then `bun test` (integration suites
    need the full compose stack: PostgreSQL + LocalStack + Keycloak **with the
    `wagering` realm imported** — token suites fetch real JWTs). Baseline
-   2026-10-09 (Phase 9): `bun run validate` exit 0; unit 256 pass / 0 fail (26 files); all
+   2026-10-09 (Phase 9): `bun run validate` exit 0; unit 262 pass / 0 fail (26 files); all
    integration suites green run individually; concurrency 10 pass / 0 fail (4 files).

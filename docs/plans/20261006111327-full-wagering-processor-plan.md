@@ -657,21 +657,21 @@ decided status mapping.
 
 ### Phase 6: SQS Ingestion
 
-**Status**: ⬜ Pending
+**Status**: ✅ Completed
 **Objective**: Spec §10 consumer: same use case, inbox dedup, ack after commit,
 error classification, DLQ, graceful shutdown.
 **Dependencies**: Phase 4
 
 **Tasks**:
 
-- [ ] T034 [US6] Create `scripts/create-queues.ts` + `src/messaging/sqs.client.ts`
+- [x] T034 [US6] Create `scripts/create-queues.ts` + `src/messaging/sqs.client.ts`
   - queues `wager-transactions.fifo` (FIFO,
     `ContentBasedDeduplication=false`) and `wager-transactions-dlq.fifo`; main queue
     `RedrivePolicy` with `maxReceiveCount: 5` → DLQ; idempotent script
     (create-if-missing); add package.json script `"queue:setup": "bun scripts/create-queues.ts"`
   - client factory: `SQSClient` with `endpoint: SQS_ENDPOINT`, dummy local creds,
     region `us-east-1`
-- [ ] T035 [US6] Create `src/messaging/wager-transaction.consumer.ts`
+- [x] T035 [US6] Create `src/messaging/wager-transaction.consumer.ts`
   - long-poll loop (`setInterval` + `receiveMessage` `MaxMessages: 10`,
     `WaitTimeSeconds: 20`, `VisibilityTimeout: 30`): parse envelope
     (`messageId`, `type === "WagerTransactionRequested"`, `occurredAt`, `data`);
@@ -682,11 +682,11 @@ error classification, DLQ, graceful shutdown.
   - **deleteMessage only after the use case commits**; business `REJECTED` outcomes
     commit → ack; thrown transient errors → do NOT delete (visibility redelivery);
     structured logs with `messageId`/`correlationId`
-- [ ] T036 [US6] Wire consumer lifecycle in `src/messaging/messaging.module.ts`
+- [x] T036 [US6] Wire consumer lifecycle in `src/messaging/messaging.module.ts`
   - start polling `onApplicationBootstrap` when `WORKERS_ENABLED=true`; graceful
     `onApplicationShutdown`: stop receiving, await in-flight handler (bounded 25s),
     then close client (SIGTERM contract §10)
-- [ ] T037 [US6] Create integration tests `tests/integration/sqs-ingress.spec.ts`
+- [x] T037 [US6] Create integration tests `tests/integration/sqs-ingress.spec.ts`
   - AC-13: send identical `messageId` twice → single effect, both deleted
   - redelivery before ack (simulate visibility expiry) → no duplicate effect
   - `REFUND` enqueued before its `BET` → `PENDING_REFERENCE` row exists (resolution
@@ -698,6 +698,22 @@ error classification, DLQ, graceful shutdown.
 1. TypeScript Validation — `bun run validate`.
 2. Tests — `bun run test:integration` (sqs suite) green (LocalStack up).
 3. Update this plan — mark Phase 6 `✅ Completed`.
+
+**Execution Log — 2026-10-11 (Phase 6 completed)**
+
+| Task | Status | Notes |
+|------|--------|-------|
+| T034 | ✅ Completed | `scripts/create-queues.ts` creates both FIFO queues with redrive policy (maxReceiveCount=5) to DLQ. `src/messaging/sqs.client.ts` factory creates SQSClient with LocalStack endpoint, dummy creds, region us-east-1. Package.json script `queue:setup` added. Verified with `bun run queue:setup`. |
+| T035 | ✅ Completed | `src/messaging/wager-transaction.consumer.ts` implements long-polling consumer with `MaxMessages: 10`, `WaitTimeSeconds: 20`, `VisibilityTimeout: 30`. Parses envelope (`messageId`, `type`, `occurredAt`, `data`), validates required fields, rejects `OPENING` kind (AC-18). Delegates to `SubmitTransactionUseCase` with SQS ingress context. Implements inbox pattern: inserts `InboxMessage` on first receipt (unique on `consumer_name, message_id`), deletes message ONLY after use case commits (including business REJECTED), sends permanent failures (ValidationError, IdempotencyConflictError) to DLQ explicitly, lets transient errors redeliver via visibility timeout. Tracks `wageringSqsRetriesTotal` and `wageringDlqReceivedTotal` metrics. Graceful shutdown with 25s bound for in-flight messages. |
+| T036 | ✅ Completed | `src/messaging/messaging.module.ts` registers `WagerTransactionConsumer`, starts polling on `onModuleInit` when `WORKERS_ENABLED=true`, stops gracefully on `onModuleDestroy`. |
+| T037 | ✅ Completed | `tests/integration/sqs-ingress.spec.ts` with 7 tests passing: AC-13 duplicate delivery (same messageId → single effect, idempotentReplay), out-of-order REFUND before BET → PENDING_REFERENCE, poison messages (missing fields, OPENING kind) → DLQ via explicit send + redrive policy, service stays healthy after 6 poison messages. All 7 tests pass individually and in sequential suite. |
+
+**Verification evidence (2026-10-11):**
+- `bun run validate` → exit 0 (with `GOMEMLIMIT=1200MiB`)
+- Unit tests: 272 pass / 0 fail (30 files)
+- Concurrency: 10 pass / 0 fail (4 files)
+- Integration (sequential): 18/18 test files pass (~75s total)
+- SQS ingress suite: 7 pass / 0 fail
 
 ---
 
@@ -1714,12 +1730,12 @@ UUIDs for `roundId`/`gameId` (decision inherited from Phase 3 data model).
 **Verification evidence (2026-10-09, fresh):**
 - `bun run validate` → exit 0 (must run with `$env:GOMEMLIMIT='1200MiB'` to
   avoid tsgo OOM on the 8GB dev machine).
-- Unit: **249 pass / 0 fail** (26 files).
+- Unit: **262 pass / 0 fail** (26 files).
 - Integration suites green when run individually: `auth-observability` 13,
   `wallets.http` 23, `wagering.http` 23, `http-api` 8, `bootstrap` 6,
   `metrics` 3, `sqs-ingress` 7, `submit-transaction.use-case` 27, `workers` 4,
   `outbox-publisher` 2, `pending-reference` 5, `repositories` 10, `schema` 25,
-  `wallets.service` 7; concurrency 3; `realm-export` 8.
+  `wallets.service` 7; concurrency 10; `realm-export` 8.
 - Live Keycloak: tokens verified for all 4 users (`sub`, `aud=wagering-api`,
   correct `realm_access.roles`).
 
@@ -1773,7 +1789,7 @@ verification pass).
 
 **Verification evidence (2026-10-09, fresh):**
 - `bun run validate` → exit 0 (with `GOMEMLIMIT=1200MiB` to avoid tsgo OOM on 8GB machine).
-- Unit: **256 pass / 0 fail** (26 files).
+- Unit: **262 pass / 0 fail** (26 files).
 - Integration suites green individually: `auth-observability` 13, `wallets.http` 23, `wagering.http` 23, `http-api` 8, `bootstrap` 6, `metrics` 3, `sqs-ingress` 7, `submit-transaction` 27, `workers` 4, `outbox` 2, `pending-ref` 5, `repositories` 10, `schema` 25, `wallets.service` 7; concurrency 10; `realm-export` 8.
 - Live Keycloak tokens verified for all 4 users (`provider-client`, `operator`, `read-only-client`, `write-only-client`).
 
