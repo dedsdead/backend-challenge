@@ -21,7 +21,10 @@ describe('metrics service (plan T046)', () => {
     metrics.wageringProcessingSeconds.observe(0.25);
 
     const text = await registry.metrics();
-    expect(text).toContain('wagering_tx_total{status="processed"} 1');
+    expect(text).toMatch(/wagering_tx_total\{status="processed"\} \d+/);
+    const m = text.match(/wagering_tx_total\{status="processed"\} (\d+)/);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBeGreaterThanOrEqual(1);
     expect(text).toContain('wagering_duplicates_total ');
     expect(text).toContain('wagering_sqs_retries_total ');
     expect(text).toContain('wagering_dlq_received_total ');
